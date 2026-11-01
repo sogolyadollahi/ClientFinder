@@ -33,7 +33,7 @@ from .sources.arbeitnow import ArbeitnowAdapter
 from .sources.base import SourceContractError, SourceFetchError
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="ClientFinder API", version="0.5.0")
+app = FastAPI(title="ClientFinder API", version="0.6.0")
 
 
 def canonicalize_website(url: str) -> str:
