@@ -1,15 +1,17 @@
-# ClientFinder — Phase 2
+# ClientFinder — Phase 3
 
 A focused lead-discovery and qualification API. It stores manually qualified company leads separately from raw job opportunities discovered through external sources.
 
 ## Current scope
 - Create, list, and retrieve qualified leads.
 - Validate incoming lead data and deduplicate leads by normalized company website.
-- Score leads using transparent deterministic rules.
+- Score manually qualified leads using transparent deterministic rules.
 - Fetch and normalize public job listings from Arbeitnow.
-- Persist opportunities independently from leads.
-- Upsert opportunities by the unique pair `source + external_id`.
+- Persist opportunities independently from leads and upsert by `source + external_id`.
 - Filter stored opportunities by source, remote status, location, and keyword.
+- Aggregate opportunities into company candidates using conservative name normalization.
+- Extract technical skills and hiring signals with deterministic keyword rules.
+- Return explainable candidate scores and evidence without automatically creating Leads.
 
 ## Stack
 Python 3.12+, FastAPI, SQLAlchemy 2, Pydantic 2, SQLite (local development), HTTPX, Pytest.
@@ -40,51 +42,63 @@ Fetch and persist one page:
 
 `POST /sources/arbeitnow/sync?page=1`
 
-The sync endpoint returns counts for fetched, created, updated, and unchanged records. Re-running the same page is idempotent: it does not create duplicate rows. A changed listing updates the existing row.
-
-Browse saved records:
+Re-running the same page is idempotent. Browse saved records:
 
 - `GET /opportunities`
 - `GET /opportunities/{opportunity_id}`
 
-Supported filters on `GET /opportunities`:
+Filters on `GET /opportunities`: `source`, `remote`, `location`, `keyword`, and `limit`.
 
-- `source=arbeitnow`
-- `remote=true` or `remote=false`
-- `location=Berlin`
-- `keyword=Python`
-- `limit=50` (maximum 200)
+## Company candidate enrichment
 
-Example:
+`GET /companies/candidates`
 
-`GET /opportunities?remote=true&location=Berlin&keyword=Python&limit=20`
+Optional query parameters:
+- `min_score=30`: minimum heuristic qualification score (0–100).
+- `limit=50`: maximum number of company candidates returned (1–200).
+
+The endpoint groups stored opportunities by a normalized company-name key, then aggregates:
+- Detected technical skills (keyword taxonomy).
+- Technical-role, multiple-opening, remote-hiring, and external-work-language signals.
+- Evidence snippets and score reasons.
+- Opportunity IDs, role titles, locations, and remote listing count.
+
+The score is a transparent prioritization heuristic, not a probability of conversion or proof of agency demand. The current normalizer strips common legal suffixes; it does not resolve legal entities, subsidiaries, or similarly named companies. Keyword matches can produce false positives and require human review.
+
+**Important:** Company candidates are not Leads. The endpoint does not guess official websites, discover personal contact data, or create Lead records. A candidate should be promoted only after a person verifies the company's official website and relevant company-level evidence.
 
 ## Data model boundary
 
-An Opportunity is a source listing. A Lead is a company record that has enough verified company-level information to qualify for outreach. Arbeitnow provides a company name and job-posting URL, but that URL is not necessarily the company's canonical website. Therefore, syncing opportunities does not automatically create leads.
+- `Opportunity`: a source job listing, identified by `source + external_id`.
+- `Company candidate`: a computed aggregation of one or more opportunities, not a persisted legal-entity record.
+- `Lead`: a manually qualified company record with a verified website and reviewed evidence.
 
-The opportunity table keeps the source's external identifier and source URL, and records when ClientFinder first and most recently observed the listing.
+An Arbeitnow job-posting URL is not treated as the company's official website.
 
-## Scoring model (v0)
-- Service relevance: up to 30
-- Hiring/collaboration signals: up to 25
-- Company-size fit: up to 15
-- Remote-work signal: up to 20
-- Public business contact: up to 10
+## Scoring model
 
-This is a heuristic baseline, not a prediction of conversion probability. The weights must be calibrated against actual outreach outcomes.
+Company-candidate score (0–100) is additive and explainable:
+- Technical skills detected: up to 30.
+- Multiple listings: 15.
+- Technical roles: 15.
+- Remote hiring: 10.
+- Explicit contract/freelance/agency language: 20.
+- Three or more listings: 10.
 
-## Important limitations
-- Arbeitnow listings are opportunity signals, not proof that the company wants to hire an external agency or freelancer.
-- No automatic company-website enrichment yet.
-- No LinkedIn scraping or automated messaging.
-- No email sending.
-- Public contact details must be used responsibly and in line with applicable law and source terms.
-- The Arbeitnow API is provided as-is; follow its current usage terms and attribution requirements.
+This score ranks candidates for manual review. Job listings are weak-to-moderate buying signals; they do not establish that the company wants an external agency or freelancer.
+
+The separate Lead score remains the existing baseline and should be calibrated against actual outreach outcomes.
+
+## Limitations and safety
+- One source page is synced per request.
+- No automatic official-website discovery or validation yet.
+- No LinkedIn scraping, automated messaging, or email sending.
+- Job descriptions are stored as source text; any future UI must escape/sanitize HTML before rendering.
+- Follow the source provider's current usage terms and attribution requirements.
 
 ## Planned phases
 1. Data model, API, deduplication, baseline scoring (complete).
-2. Source adapters, opportunity persistence, and searchable discovery (implemented for first source).
-3. Company enrichment, evidence extraction, and improved scoring.
+2. Source adapters, opportunity persistence, and searchable discovery (implemented for Arbeitnow).
+3. Company candidate aggregation, evidence extraction, and explainable prioritization (implemented baseline).
 4. Streamlit dashboard, review queue, and outreach drafts.
 5. Feedback loop: contacted / replied / call / proposal / won / lost.
