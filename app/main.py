@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy import or_, select
@@ -7,8 +8,15 @@ from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
 from .enrichment import build_company_candidates
-from .models import Lead, Opportunity
-from .schemas import LeadCreate, LeadRead
+from .models import CompanyReview, Lead, Opportunity
+from .schemas import (
+    CompanyReviewCreate,
+    CompanyReviewRead,
+    CompanyReviewUpdate,
+    LeadCreate,
+    LeadPromotionResult,
+    LeadRead,
+)
 from .scoring import calculate_score
 from .source_schemas import (
     CompanyCandidate,
@@ -20,7 +28,31 @@ from .sources.arbeitnow import ArbeitnowAdapter
 from .sources.base import SourceContractError, SourceFetchError
 
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="ClientFinder API", version="0.4.0")
+app = FastAPI(title="ClientFinder API", version="0.5.0")
+
+
+def canonicalize_website(url: str) -> str:
+    """Store only the verified website origin; remove www and tracking paths."""
+    parsed = urlsplit(str(url))
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if not host:
+        raise ValueError("A valid website hostname is required")
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme.lower()}://{host}{port}"
+
+
+def _candidate_for_key(db: Session, normalized_key: str) -> dict | None:
+    records = db.scalars(select(Opportunity)).all()
+    return next(
+        (
+            candidate
+            for candidate in build_company_candidates(records)
+            if candidate["normalized_key"] == normalized_key
+        ),
+        None,
+    )
 
 
 @app.get("/health")
@@ -30,7 +62,7 @@ def health():
 
 @app.post("/leads", response_model=LeadRead, status_code=201)
 def create_lead(payload: LeadCreate, db: Session = Depends(get_db)):
-    website = str(payload.website).rstrip("/").lower()
+    website = canonicalize_website(str(payload.website))
     existing = db.scalar(select(Lead).where(Lead.website == website))
     if existing:
         raise HTTPException(status_code=409, detail="A lead with this website already exists")
@@ -49,7 +81,7 @@ def create_lead(payload: LeadCreate, db: Session = Depends(get_db)):
         opportunity_types=payload.opportunity_types,
         services_text=payload.services_text,
         evidence_text=payload.evidence_text,
-        public_contact=str(payload.public_contact) if payload.public_contact else None,
+        public_contact=payload.public_contact,
         score=result.score,
         score_reasons="; ".join(result.reasons),
     )
@@ -57,9 +89,9 @@ def create_lead(payload: LeadCreate, db: Session = Depends(get_db)):
     try:
         db.commit()
         db.refresh(lead)
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="A lead with this website already exists")
+        raise HTTPException(status_code=409, detail="A lead with this website already exists") from exc
     return lead
 
 
@@ -94,11 +126,8 @@ def discover_arbeitnow_jobs(page: int = Query(default=1, ge=1, le=100)):
     """Fetch and preview one page; this endpoint does not write to the database."""
     try:
         jobs = ArbeitnowAdapter().fetch_jobs(page=page)
-    except SourceFetchError as exc:
+    except (SourceFetchError, SourceContractError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except SourceContractError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
     return JobOpportunityPage(source="arbeitnow", page=page, count=len(jobs), results=jobs)
 
 
@@ -110,14 +139,11 @@ def sync_arbeitnow_jobs(
     """Fetch one page and upsert opportunities using source + external ID."""
     try:
         jobs = ArbeitnowAdapter().fetch_jobs(page=page)
-    except SourceFetchError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except SourceContractError as exc:
+    except (SourceFetchError, SourceContractError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     created = updated = unchanged = 0
     now = datetime.now(timezone.utc)
-
     try:
         for job in jobs:
             values = {
@@ -138,18 +164,12 @@ def sync_arbeitnow_jobs(
                 )
             )
             if existing is None:
-                db.add(
-                    Opportunity(
-                        source=job.source,
-                        external_id=job.external_id,
-                        **values,
-                        first_seen_at=now,
-                        last_seen_at=now,
-                    )
-                )
+                db.add(Opportunity(
+                    source=job.source, external_id=job.external_id, **values,
+                    first_seen_at=now, last_seen_at=now,
+                ))
                 created += 1
                 continue
-
             changed = any(getattr(existing, key) != value for key, value in values.items())
             existing.last_seen_at = now
             if changed:
@@ -158,7 +178,6 @@ def sync_arbeitnow_jobs(
                 updated += 1
             else:
                 unchanged += 1
-
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -168,11 +187,8 @@ def sync_arbeitnow_jobs(
         ) from exc
 
     return OpportunitySyncResult(
-        source="arbeitnow",
-        fetched=len(jobs),
-        created=created,
-        updated=updated,
-        unchanged=unchanged,
+        source="arbeitnow", fetched=len(jobs), created=created,
+        updated=updated, unchanged=unchanged,
     )
 
 
@@ -194,13 +210,11 @@ def list_opportunities(
         statement = statement.where(Opportunity.location.ilike(f"%{location}%"))
     if keyword:
         pattern = f"%{keyword}%"
-        statement = statement.where(
-            or_(
-                Opportunity.title.ilike(pattern),
-                Opportunity.company_name.ilike(pattern),
-                Opportunity.description.ilike(pattern),
-            )
-        )
+        statement = statement.where(or_(
+            Opportunity.title.ilike(pattern),
+            Opportunity.company_name.ilike(pattern),
+            Opportunity.description.ilike(pattern),
+        ))
     statement = statement.order_by(Opportunity.source_created_at.desc()).limit(limit)
     return list(db.scalars(statement).all())
 
@@ -224,3 +238,124 @@ def list_company_candidates(
     candidates = build_company_candidates(records)
     filtered = [item for item in candidates if item["qualification_score"] >= min_score]
     return filtered[:limit]
+
+
+@app.post("/companies/reviews", response_model=CompanyReviewRead, status_code=201)
+def create_company_review(
+    payload: CompanyReviewCreate,
+    db: Session = Depends(get_db),
+):
+    candidate = _candidate_for_key(db, payload.normalized_key)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Company candidate not found")
+    existing = db.scalar(
+        select(CompanyReview).where(CompanyReview.normalized_key == payload.normalized_key)
+    )
+    if existing:
+        return existing
+    review = CompanyReview(
+        normalized_key=payload.normalized_key,
+        company_name=candidate["company_name"],
+        verification_status="pending",
+    )
+    db.add(review)
+    try:
+        db.commit()
+        db.refresh(review)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Review already exists") from exc
+    return review
+
+
+@app.get("/companies/reviews", response_model=list[CompanyReviewRead])
+def list_company_reviews(
+    status: str | None = Query(default=None, pattern="^(pending|verified|rejected)$"),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    statement = select(CompanyReview).order_by(CompanyReview.updated_at.desc()).limit(limit)
+    if status:
+        statement = statement.where(CompanyReview.verification_status == status)
+    return list(db.scalars(statement).all())
+
+
+@app.patch("/companies/reviews/{review_id}", response_model=CompanyReviewRead)
+def update_company_review(
+    review_id: int,
+    payload: CompanyReviewUpdate,
+    db: Session = Depends(get_db),
+):
+    review = db.get(CompanyReview, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="Company review not found")
+    if payload.verification_status == "verified" and payload.official_website is None:
+        raise HTTPException(
+            status_code=422,
+            detail="An official website is required before marking a company verified",
+        )
+    if payload.official_website is not None:
+        review.official_website = canonicalize_website(str(payload.official_website))
+    review.verification_status = payload.verification_status
+    review.verification_notes = payload.verification_notes
+    try:
+        db.commit()
+        db.refresh(review)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Website conflicts with an existing lead") from exc
+    return review
+
+
+@app.post("/companies/reviews/{review_id}/promote", response_model=LeadPromotionResult)
+def promote_company_review(review_id: int, db: Session = Depends(get_db)):
+    review = db.get(CompanyReview, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="Company review not found")
+    if review.lead_id is not None:
+        lead = db.get(Lead, review.lead_id)
+        if lead is not None:
+            return LeadPromotionResult(review=review, lead=lead)
+    if review.verification_status != "verified" or not review.official_website:
+        raise HTTPException(status_code=409, detail="Verify the official website before promotion")
+
+    candidate = _candidate_for_key(db, review.normalized_key)
+    if candidate is None:
+        raise HTTPException(status_code=409, detail="No current opportunity evidence for this company")
+
+    existing = db.scalar(select(Lead).where(Lead.website == review.official_website))
+    if existing:
+        raise HTTPException(status_code=409, detail="A Lead already exists for this website")
+
+    services_text = ", ".join(candidate["detected_skills"])
+    evidence_text = "\n".join(candidate["evidence"] + candidate["score_reasons"])
+    score = calculate_score(
+        services_text=services_text,
+        evidence_text=evidence_text,
+        company_size="unknown",
+        has_public_contact=False,
+    )
+    lead = Lead(
+        company_name=review.company_name,
+        website=review.official_website,
+        region=", ".join(candidate["locations"][:3]) or "unknown",
+        company_size="unknown",
+        opportunity_types="both",
+        services_text=services_text,
+        evidence_text=evidence_text,
+        public_contact=None,
+        score=score.score,
+        score_reasons="; ".join(score.reasons),
+        status="new",
+    )
+    db.add(lead)
+    try:
+        db.flush()
+        review.lead_id = lead.id
+        db.commit()
+        db.refresh(lead)
+        db.refresh(review)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Lead promotion conflicted with an existing record") from exc
+    return LeadPromotionResult(review=review, lead=lead)
