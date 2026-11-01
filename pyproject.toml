@@ -1,6 +1,6 @@
 [project]
 name = "clientfinder"
-version = "0.1.0"
+version = "0.2.0"
 description = "A focused lead discovery and qualification system"
 requires-python = ">=3.12"
 dependencies = [
@@ -8,7 +8,8 @@ dependencies = [
   "uvicorn[standard]>=0.30,<1.0",
   "sqlalchemy>=2.0,<3.0",
   "pydantic>=2.8,<3.0",
-  "email-validator>=2.2,<3.0"
+  "email-validator>=2.2,<3.0",
+  "httpx>=0.27,<1.0"
 ]
 
 [project.optional-dependencies]
