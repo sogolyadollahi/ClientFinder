@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl
 
 
 class LeadCreate(BaseModel):
@@ -12,7 +12,7 @@ class LeadCreate(BaseModel):
     opportunity_types: str = Field(default="both", pattern="^(projects|internships|both)$")
     services_text: str = Field(default="", max_length=5000)
     evidence_text: str = Field(default="", max_length=5000)
-    public_contact: str | None = None
+    public_contact: EmailStr | None = None
 
 
 class LeadRead(BaseModel):
