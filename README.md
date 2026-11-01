@@ -1,18 +1,17 @@
-# ClientFinder — Phase 1
+# ClientFinder — Phase 2
 
-A small API foundation for collecting, storing, deduplicating, and scoring agency leads.
-This phase deliberately does **not** scrape websites or send outreach messages.
+A focused lead-discovery and qualification API. The project currently provides a stable lead-management foundation and its first external job-source adapter.
 
 ## Current scope
-- Create leads manually or from a future approved data source.
+- Create leads manually.
 - Validate incoming lead data.
 - Normalize website URLs and reject duplicate websites.
 - Score leads using transparent deterministic rules.
-- List leads by minimum score and status.
-- Retrieve a lead by ID.
+- List leads by minimum score and status; retrieve a lead by ID.
+- Fetch and normalize public job listings from Arbeitnow through a source adapter.
 
 ## Stack
-Python 3.12+, FastAPI, SQLAlchemy 2, Pydantic 2, SQLite (local development), Pytest.
+Python 3.12+, FastAPI, SQLAlchemy 2, Pydantic 2, SQLite (local development), HTTPX, Pytest.
 
 ## Setup (Windows PowerShell)
 
@@ -33,6 +32,16 @@ Open:
 ```powershell
 pytest -q
 ```
+
+## Discover public job opportunities
+
+`GET /sources/arbeitnow/jobs?page=1`
+
+This endpoint fetches one page from the public Arbeitnow job-board API and returns normalized job-opportunity records. It does **not** automatically create Lead rows.
+
+Why they are separate: the job feed provides a company name and a job-posting URL, but does not reliably provide the company's canonical website. ClientFinder currently requires a company website to create a Lead and uses that website as its deduplication key. Treating a job-posting URL as the company website would corrupt the data model. A later enrichment step must verify the company's official website before promotion to Lead.
+
+The source adapter validates the response shape and raises explicit errors for network failures or unexpected source data. It uses a 15-second request timeout.
 
 ## Example lead payload
 
@@ -61,15 +70,16 @@ Send it to `POST /leads`.
 This is a heuristic baseline, not a prediction of conversion probability. The weights must be calibrated against actual outreach outcomes.
 
 ## Important limitations
-- No automated web collection yet.
+- Arbeitnow listings are opportunity signals, not proof that the company wants to hire an external agency or freelancer.
+- No automatic company-website enrichment yet.
 - No LinkedIn scraping or automated messaging.
 - No email sending.
-- No claim that a company accepts contractors located in every country.
 - Public contact details must be used responsibly and in line with applicable law and source terms.
+- The Arbeitnow API is provided as-is; the provider asks consumers to link back to Arbeitnow and may revoke API access.
 
 ## Planned phases
-1. Data model, API, deduplication, baseline scoring (current).
-2. Source adapters for approved public sources and job/contract opportunity feeds.
+1. Data model, API, deduplication, baseline scoring (complete).
+2. Source adapters for approved public sources and job/contract opportunity feeds (first adapter implemented).
 3. Enrichment, evidence extraction, and improved scoring.
 4. Streamlit dashboard, review queue, and outreach drafts.
 5. Feedback loop: contacted / replied / call / proposal / won / lost.
