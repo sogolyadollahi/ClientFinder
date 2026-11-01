@@ -1,6 +1,6 @@
 [project]
 name = "clientfinder"
-version = "0.3.0"
+version = "0.4.0"
 description = "A focused lead discovery and qualification system"
 requires-python = ">=3.12"
 dependencies = [
