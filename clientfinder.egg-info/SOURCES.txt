@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+app/__init__.py
+app/database.py
+app/main.py
+app/models.py
+app/schemas.py
+app/scoring.py
+clientfinder.egg-info/PKG-INFO
+clientfinder.egg-info/SOURCES.txt
+clientfinder.egg-info/dependency_links.txt
+clientfinder.egg-info/requires.txt
+clientfinder.egg-info/top_level.txt
+tests/test_api.py
+tests/test_scoring.py
