@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint
+
+from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
+
 from .database import Base
+
 
 class Lead(Base):
     __tablename__ = "leads"
@@ -21,4 +24,32 @@ class Lead(Base):
     status: Mapped[str] = mapped_column(String(30), default="new", index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class Opportunity(Base):
+    __tablename__ = "opportunities"
+    __table_args__ = (
+        UniqueConstraint("source", "external_id", name="uq_opportunity_source_external_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    source: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    external_id: Mapped[str] = mapped_column(String(300), nullable=False)
+    company_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(300), nullable=False, index=True)
+    location: Mapped[str] = mapped_column(String(200), default="unknown", index=True)
+    remote: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    job_types: Mapped[list[str]] = mapped_column(JSON, default=list)
+    description: Mapped[str] = mapped_column(Text, default="")
+    source_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    source_created_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
