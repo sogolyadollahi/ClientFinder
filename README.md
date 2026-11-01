@@ -1,4 +1,4 @@
-# ClientFinder — Phase 4
+# ClientFinder — Phase 5
 
 A focused lead-discovery and qualification API. It keeps raw job opportunities, computed company candidates, manual company verification, and qualified Leads as separate stages.
 
@@ -9,6 +9,9 @@ A focused lead-discovery and qualification API. It keeps raw job opportunities, 
 - Aggregate opportunities into company candidates with deterministic skill and hiring-signal extraction.
 - Maintain a persistent manual company-review queue.
 - Require a manually verified official website before promoting a candidate to a Lead.
+- Record Lead interactions and maintain a sales-pipeline status.
+- Store personalized outreach drafts based on saved research facts and user-provided context.
+- Report Lead, interaction, and draft counts by pipeline stage.
 - Prevent duplicate promotion of the same review and duplicate Lead website records.
 
 ## Stack
@@ -58,7 +61,7 @@ A review can also be marked `rejected` or returned to `pending`. The website fie
 - `CompanyReview`: persistent manual verification state, official website, reviewer notes, and eventual Lead reference.
 - `Lead`: qualified company record eligible for later outreach preparation.
 
-No automatic domain guessing or website discovery is performed. A human must verify that the website belongs to the company. The system does not scrape LinkedIn, collect personal contact data, send email, or automate outreach.
+No automatic domain guessing or website discovery is performed. A human must verify that the website belongs to the company. The system does not scrape LinkedIn, collect personal contact data, send email, or automate outreach. Outreach endpoints only save drafts; a human must review and send them outside the system.
 
 ## Scoring and evidence
 
@@ -69,3 +72,19 @@ Candidate scoring is a prioritization heuristic. Lead promotion recalculates the
 - Website verification is a human attestation recorded by the API; the service does not independently prove domain ownership.
 - SQLite `create_all` is used for local development; introduce Alembic migrations before deploying schema changes to an existing production database.
 - Job description content must be escaped/sanitized before rendering in any UI.
+
+
+## Phase 5 — Outreach and pipeline
+
+- Record an interaction: `POST /leads/{lead_id}/interactions`
+  - Allowed types: `contacted`, `replied`, `call`, `proposal`, `won`, `lost`.
+  - Optional fields: notes, occurrence timestamp, and next-action timestamp.
+  - The Lead's current status reflects the most recently recorded interaction.
+- List interaction history: `GET /leads/{lead_id}/interactions`
+- Create an outreach draft: `POST /leads/{lead_id}/outreach-drafts`
+  - Example JSON: `{"channel":"email","tone":"professional","context":"Optional user-written context"}`
+  - Channels: email, LinkedIn, or other. Tones: professional or concise.
+- List drafts: `GET /leads/{lead_id}/outreach-drafts`
+- Pipeline summary: `GET /analytics/pipeline`
+
+Draft generation uses only saved Lead research fields and optional user-provided context. It does not verify claims, discover contacts, or send messages. Review and edit every draft before using it. Interactions are append-only history records; the Lead status is a convenient current-stage field, not a replacement for that history.
