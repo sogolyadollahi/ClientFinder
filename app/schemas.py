@@ -62,3 +62,45 @@ class LeadPromotionResult(BaseModel):
     lead: LeadRead
 
 
+class LeadInteractionCreate(BaseModel):
+    interaction_type: Literal["contacted", "replied", "call", "proposal", "won", "lost"]
+    notes: str = Field(default="", max_length=5000)
+    occurred_at: datetime | None = None
+    next_action_at: datetime | None = None
+
+
+class LeadInteractionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lead_id: int
+    interaction_type: str
+    notes: str
+    occurred_at: datetime
+    next_action_at: datetime | None
+    created_at: datetime
+
+
+class OutreachDraftCreate(BaseModel):
+    channel: Literal["email", "linkedin", "other"] = "email"
+    tone: Literal["professional", "concise"] = "professional"
+    context: str = Field(default="", max_length=1500)
+
+
+class OutreachDraftRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lead_id: int
+    channel: str
+    subject: str
+    body: str
+    status: str
+    created_at: datetime
+
+
+class PipelineSummary(BaseModel):
+    total_leads: int
+    by_status: dict[str, int]
+    total_interactions: int
+    total_drafts: int
