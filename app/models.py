@@ -53,3 +53,26 @@ class Opportunity(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class CompanyReview(Base):
+    __tablename__ = "company_reviews"
+    __table_args__ = (
+        UniqueConstraint("normalized_key", name="uq_company_review_normalized_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    normalized_key: Mapped[str] = mapped_column(String(250), nullable=False, index=True)
+    company_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    official_website: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    verification_status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    verification_notes: Mapped[str] = mapped_column(Text, default="")
+    lead_id: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
