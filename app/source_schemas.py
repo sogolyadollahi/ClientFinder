@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
@@ -24,3 +26,30 @@ class JobOpportunityPage(BaseModel):
     page: int
     count: int
     results: list[JobOpportunity]
+
+
+class OpportunityRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source: str
+    external_id: str
+    company_name: str
+    title: str
+    location: str
+    remote: bool
+    tags: list[str]
+    job_types: list[str]
+    description: str
+    source_url: str
+    source_created_at: int | None
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+
+class OpportunitySyncResult(BaseModel):
+    source: str
+    fetched: int
+    created: int
+    updated: int
+    unchanged: int
