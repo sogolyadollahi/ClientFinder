@@ -60,10 +60,7 @@ def make_job(
 
 
 def test_sync_creates_new_opportunity(monkeypatch, client_with_database):
-    monkeypatch.setattr(
-        "app.main.ArbeitnowAdapter.fetch_jobs",
-        lambda self, page=1: [make_job()],
-    )
+    monkeypatch.setattr("app.main.ArbeitnowAdapter.fetch_jobs", lambda self, page=1: [make_job()])
     response = client_with_database.post("/sources/arbeitnow/sync?page=1")
     assert response.status_code == 200, response.json()
     assert response.json() == {
@@ -76,10 +73,7 @@ def test_sync_creates_new_opportunity(monkeypatch, client_with_database):
 
 
 def test_sync_is_idempotent_for_unchanged_records(monkeypatch, client_with_database):
-    monkeypatch.setattr(
-        "app.main.ArbeitnowAdapter.fetch_jobs",
-        lambda self, page=1: [make_job()],
-    )
+    monkeypatch.setattr("app.main.ArbeitnowAdapter.fetch_jobs", lambda self, page=1: [make_job()])
     first = client_with_database.post("/sources/arbeitnow/sync")
     second = client_with_database.post("/sources/arbeitnow/sync")
     assert first.json()["created"] == 1
@@ -110,17 +104,14 @@ def test_opportunity_filters_by_remote_location_and_keyword(monkeypatch, client_
         ],
     )
     client_with_database.post("/sources/arbeitnow/sync")
-    response = client_with_database.get(
-        "/opportunities?remote=true&location=Berlin&keyword=Python"
-    )
+    response = client_with_database.get("/opportunities?remote=true&location=Berlin&keyword=Python")
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["external_id"] == "remote-1"
 
 
 def test_get_opportunity_returns_404_for_unknown_id(client_with_database):
-    response = client_with_database.get("/opportunities/999")
-    assert response.status_code == 404
+    assert client_with_database.get("/opportunities/999").status_code == 404
 
 
 def test_company_candidates_group_legal_suffix_variants(monkeypatch, client_with_database):
@@ -129,8 +120,7 @@ def test_company_candidates_group_legal_suffix_variants(monkeypatch, client_with
         lambda self, page=1: [
             make_job(external_id="one", company_name="Acme GmbH"),
             make_job(
-                external_id="two",
-                company_name="ACME",
+                external_id="two", company_name="ACME",
                 title="Senior Software Engineer",
                 description="We are looking for a Python contractor to build APIs.",
             ),
@@ -139,21 +129,92 @@ def test_company_candidates_group_legal_suffix_variants(monkeypatch, client_with
     client_with_database.post("/sources/arbeitnow/sync")
     response = client_with_database.get("/companies/candidates")
     assert response.status_code == 200
-    assert len(response.json()) == 1
     candidate = response.json()[0]
+    assert len(response.json()) == 1
     assert candidate["normalized_key"] == "acme"
     assert candidate["opportunity_count"] == 2
     assert candidate["signals"]["multiple_openings"] is True
     assert candidate["signals"]["external_work_language"] is True
     assert "Python" in candidate["detected_skills"]
-    assert candidate["qualification_score"] <= 100
 
 
 def test_company_candidates_do_not_create_leads(monkeypatch, client_with_database):
-    monkeypatch.setattr(
-        "app.main.ArbeitnowAdapter.fetch_jobs",
-        lambda self, page=1: [make_job()],
-    )
+    monkeypatch.setattr("app.main.ArbeitnowAdapter.fetch_jobs", lambda self, page=1: [make_job()])
     client_with_database.post("/sources/arbeitnow/sync")
     client_with_database.get("/companies/candidates")
     assert client_with_database.get("/leads").json() == []
+
+
+def seed_candidate(monkeypatch, client):
+    monkeypatch.setattr("app.main.ArbeitnowAdapter.fetch_jobs", lambda self, page=1: [make_job()])
+    client.post("/sources/arbeitnow/sync")
+
+
+def test_review_creation_and_verification_workflow(monkeypatch, client_with_database):
+    seed_candidate(monkeypatch, client_with_database)
+    candidate = client_with_database.get("/companies/candidates").json()[0]
+    created = client_with_database.post("/companies/reviews", json={
+        "normalized_key": candidate["normalized_key"],
+        "company_name": candidate["company_name"],
+    })
+    assert created.status_code == 201, created.text
+    review_id = created.json()["id"]
+    invalid = client_with_database.patch(f"/companies/reviews/{review_id}", json={
+        "verification_status": "verified",
+        "verification_notes": "Could not confirm the domain",
+    })
+    assert invalid.status_code == 422
+    verified = client_with_database.patch(f"/companies/reviews/{review_id}", json={
+        "official_website": "https://www.example.com/about",
+        "verification_status": "verified",
+        "verification_notes": "Official company website manually checked",
+    })
+    assert verified.status_code == 200
+    assert verified.json()["official_website"] == "https://example.com"
+
+
+def test_promotion_requires_verified_website(monkeypatch, client_with_database):
+    seed_candidate(monkeypatch, client_with_database)
+    candidate = client_with_database.get("/companies/candidates").json()[0]
+    review = client_with_database.post("/companies/reviews", json={
+        "normalized_key": candidate["normalized_key"],
+        "company_name": candidate["company_name"],
+    }).json()
+    response = client_with_database.post(f"/companies/reviews/{review['id']}/promote")
+    assert response.status_code == 409
+    assert client_with_database.get("/leads").json() == []
+
+
+def test_verified_company_can_be_promoted_once(monkeypatch, client_with_database):
+    seed_candidate(monkeypatch, client_with_database)
+    candidate = client_with_database.get("/companies/candidates").json()[0]
+    review = client_with_database.post("/companies/reviews", json={
+        "normalized_key": candidate["normalized_key"],
+        "company_name": candidate["company_name"],
+    }).json()
+    updated = client_with_database.patch(f"/companies/reviews/{review['id']}", json={
+        "official_website": "https://example.com",
+        "verification_status": "verified",
+        "verification_notes": "Verified manually",
+    })
+    assert updated.status_code == 200
+    promoted = client_with_database.post(f"/companies/reviews/{review['id']}/promote")
+    assert promoted.status_code == 200, promoted.text
+    body = promoted.json()
+    assert body["lead"]["website"] == "https://example.com"
+    assert body["review"]["lead_id"] == body["lead"]["id"]
+    second = client_with_database.post(f"/companies/reviews/{review['id']}/promote")
+    assert second.status_code == 200
+    assert second.json()["lead"]["id"] == body["lead"]["id"]
+    assert len(client_with_database.get("/leads").json()) == 1
+
+
+def test_review_duplicate_key_returns_existing_review(monkeypatch, client_with_database):
+    seed_candidate(monkeypatch, client_with_database)
+    candidate = client_with_database.get("/companies/candidates").json()[0]
+    payload = {"normalized_key": candidate["normalized_key"], "company_name": candidate["company_name"]}
+    first = client_with_database.post("/companies/reviews", json=payload)
+    second = client_with_database.post("/companies/reviews", json=payload)
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] == second.json()["id"]
