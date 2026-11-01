@@ -29,6 +29,8 @@ uvicorn app.main:app --reload
 
 Run tests with `pytest -q`.
 
+Install the optional dashboard dependencies with `pip install -e ".[dashboard]"`.
+
 ## Main workflow
 
 1. Preview or sync a source page:
@@ -88,3 +90,31 @@ Candidate scoring is a prioritization heuristic. Lead promotion recalculates the
 - Pipeline summary: `GET /analytics/pipeline`
 
 Draft generation uses only saved Lead research fields and optional user-provided context. It does not verify claims, discover contacts, or send messages. Review and edit every draft before using it. Interactions are append-only history records; the Lead status is a convenient current-stage field, not a replacement for that history.
+
+
+## Phase 6 — Streamlit dashboard
+
+Start the API in one terminal:
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+Install dashboard dependencies and start the UI in a second terminal:
+
+```powershell
+pip install -e ".[dashboard]"
+streamlit run dashboard/streamlit_app.py
+```
+
+Open the local Streamlit URL shown in the terminal (usually http://localhost:8501). The dashboard reads and writes data through the FastAPI service; it does not access the database directly.
+
+Set CLIENTFINDER_API_URL if the API is hosted somewhere other than http://127.0.0.1:8000. The dashboard includes:
+- Overview metrics for Leads, pipeline stages, interactions, drafts, and saved opportunities.
+- Lead filtering by pipeline stage and minimum score.
+- Lead detail, research evidence, and interaction history.
+- Interaction logging with optional next-action timestamp.
+- Email / LinkedIn / other outreach draft creation and review. Drafts are never sent.
+- Arbeitnow opportunity browsing and manual source sync.
+
+The dashboard is intended for trusted local use. The API currently has no authentication; do not expose either service publicly without adding authentication, authorization, and deployment hardening.
