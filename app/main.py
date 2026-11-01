@@ -2,13 +2,13 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
 from .enrichment import build_company_candidates
-from .models import CompanyReview, Lead, Opportunity
+from .models import CompanyReview, Lead, LeadInteraction, Opportunity, OutreachDraft
 from .schemas import (
     CompanyReviewCreate,
     CompanyReviewRead,
@@ -16,6 +16,11 @@ from .schemas import (
     LeadCreate,
     LeadPromotionResult,
     LeadRead,
+    LeadInteractionCreate,
+    LeadInteractionRead,
+    OutreachDraftCreate,
+    OutreachDraftRead,
+    PipelineSummary,
 )
 from .scoring import calculate_score
 from .source_schemas import (
@@ -359,3 +364,128 @@ def promote_company_review(review_id: int, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=409, detail="Lead promotion conflicted with an existing record") from exc
     return LeadPromotionResult(review=review, lead=lead)
+
+
+
+@app.post("/leads/{lead_id}/interactions", response_model=LeadInteractionRead, status_code=201)
+def create_lead_interaction(
+    lead_id: int,
+    payload: LeadInteractionCreate,
+    db: Session = Depends(get_db),
+):
+    """Record an interaction and advance the Lead's current pipeline status."""
+    lead = db.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    interaction = LeadInteraction(
+        lead_id=lead_id,
+        interaction_type=payload.interaction_type,
+        notes=payload.notes,
+        occurred_at=payload.occurred_at or datetime.now(timezone.utc),
+        next_action_at=payload.next_action_at,
+    )
+    db.add(interaction)
+    lead.status = payload.interaction_type
+    db.commit()
+    db.refresh(interaction)
+    return interaction
+
+
+@app.get("/leads/{lead_id}/interactions", response_model=list[LeadInteractionRead])
+def list_lead_interactions(lead_id: int, db: Session = Depends(get_db)):
+    if db.get(Lead, lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    statement = (
+        select(LeadInteraction)
+        .where(LeadInteraction.lead_id == lead_id)
+        .order_by(LeadInteraction.occurred_at.desc(), LeadInteraction.id.desc())
+    )
+    return list(db.scalars(statement).all())
+
+
+def _build_outreach_copy(lead: Lead, payload: OutreachDraftCreate) -> tuple[str, str]:
+    """Build a conservative draft from stored lead facts and explicitly supplied context."""
+    subject = f"Exploring potential collaboration with {lead.company_name}"
+    greeting = f"Hello {lead.company_name} team,"
+    if payload.tone == "concise":
+        paragraphs = [
+            greeting,
+            "Would external technical support be useful for your team at the moment?",
+        ]
+        if payload.context.strip():
+            paragraphs.append(payload.context.strip())
+        paragraphs.append("Best regards,\n[Your name]")
+    else:
+        paragraphs = [
+            greeting,
+            "I’m reaching out to explore whether external technical support could be useful for your team.",
+        ]
+        if lead.services_text.strip():
+            paragraphs.append(
+                "The areas noted in our research include: " + lead.services_text.strip()[:1200] + "."
+            )
+        if lead.evidence_text.strip():
+            paragraphs.append(
+                "Research context recorded for this company: " + lead.evidence_text.strip()[:900]
+            )
+        if payload.context.strip():
+            paragraphs.append(payload.context.strip())
+        paragraphs.extend([
+            "Would you be open to a brief conversation to see whether there may be a fit?",
+            "Best regards,\n[Your name]",
+        ])
+    if payload.channel == "linkedin":
+        subject = ""
+    return subject, "\n\n".join(paragraphs)
+
+
+@app.post("/leads/{lead_id}/outreach-drafts", response_model=OutreachDraftRead, status_code=201)
+def create_outreach_draft(
+    lead_id: int,
+    payload: OutreachDraftCreate,
+    db: Session = Depends(get_db),
+):
+    """Save a draft only. This endpoint never sends messages."""
+    lead = db.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    subject, body = _build_outreach_copy(lead, payload)
+    draft = OutreachDraft(
+        lead_id=lead_id,
+        channel=payload.channel,
+        subject=subject,
+        body=body,
+        status="draft",
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+    return draft
+
+
+@app.get("/leads/{lead_id}/outreach-drafts", response_model=list[OutreachDraftRead])
+def list_outreach_drafts(lead_id: int, db: Session = Depends(get_db)):
+    if db.get(Lead, lead_id) is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    statement = (
+        select(OutreachDraft)
+        .where(OutreachDraft.lead_id == lead_id)
+        .order_by(OutreachDraft.created_at.desc())
+    )
+    return list(db.scalars(statement).all())
+
+
+@app.get("/analytics/pipeline", response_model=PipelineSummary)
+def get_pipeline_summary(db: Session = Depends(get_db)):
+    statuses = ["new", "contacted", "replied", "call", "proposal", "won", "lost"]
+    grouped = db.execute(
+        select(Lead.status, func.count(Lead.id)).group_by(Lead.status)
+    ).all()
+    by_status = {status: 0 for status in statuses}
+    by_status.update({status: count for status, count in grouped})
+    return PipelineSummary(
+        total_leads=sum(by_status.values()),
+        by_status=by_status,
+        total_interactions=db.scalar(select(func.count(LeadInteraction.id))) or 0,
+        total_drafts=db.scalar(select(func.count(OutreachDraft.id))) or 0,
+    )
