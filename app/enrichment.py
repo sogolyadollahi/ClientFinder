@@ -81,7 +81,7 @@ def build_company_candidates(opportunities: Iterable[Opportunity]) -> list[dict]
         )
         contractor_signal = _contains(
             combined_text,
-            r"\b(freelance|freelancer|contractor|contract|external partner|agency)\b",
+            r"\b(freelance|freelancer|contractor|independent contractor|external partner|agency|consultancy|consulting partner|staff augmentation|outsourcing)\b",
         )
 
         score = 0
