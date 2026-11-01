@@ -53,3 +53,28 @@ class OpportunitySyncResult(BaseModel):
     created: int
     updated: int
     unchanged: int
+
+
+class CompanySignals(BaseModel):
+    technical_roles: bool
+    multiple_openings: bool
+    remote_hiring: bool
+    external_work_language: bool
+
+
+class CompanyCandidate(BaseModel):
+    company_name: str
+    normalized_key: str
+    opportunity_count: int
+    opportunity_ids: list[int]
+    job_titles: list[str]
+    locations: list[str]
+    remote_opportunity_count: int
+    detected_skills: list[str]
+    signals: CompanySignals
+    qualification_score: int = Field(ge=0, le=100)
+    score_reasons: list[str]
+    evidence: list[str]
+    review_status: str
+
+
