@@ -7,39 +7,83 @@
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
-      "parameters": {"rule": {"interval": [{"field": "hours", "hoursInterval": 12}]}},
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 12
+            }
+          ]
+        }
+      },
       "id": "7b1d1f0a-6a21-4d90-a2d7-3e62a9a1c002",
       "name": "Every 12 hours",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [240, 500]
+      "position": [
+        240,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return Array.from({ length: 5 }, (_, index) => ({ json: { page: index + 1 } }));"
+      },
+      "id": "7b1d1f0a-6a21-4d90-a2d7-3e62a9a1c007",
+      "name": "Generate pages 1-5",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        400
+      ]
     },
     {
       "parameters": {
         "url": "https://www.arbeitnow.com/api/job-board-api",
         "sendQuery": true,
-        "queryParameters": {"parameters": [{"name": "page", "value": "1"}]},
-        "options": {"timeout": 30000}
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "page",
+              "value": "={{ $json.page }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
       },
       "id": "7b1d1f0a-6a21-4d90-a2d7-3e62a9a1c003",
       "name": "Fetch Arbeitnow",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [520, 400]
+      "position": [
+        760,
+        400
+      ]
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const payload = $input.first().json;\nconst jobs = (payload.data || []).filter(job => job && job.remote === true).map(job => ({\n  source: 'arbeitnow',\n  external_id: String(job.slug || job.url || ''),\n  company_name: job.company_name || 'Unknown company',\n  title: job.title || '',\n  location: job.location || 'unknown',\n  remote: true,\n  tags: Array.isArray(job.tags) ? job.tags : [],\n  job_types: Array.isArray(job.job_types) ? job.job_types : [],\n  description: job.description || '',\n  source_url: job.url || '',\n  created_at: Number.isInteger(job.created_at) ? job.created_at : null\n})).filter(job => job.external_id && job.title && job.source_url);\nreturn [{ json: { jobs, remote_only: true } }];"
+        "jsCode": "const pages = $input.all();\nconst seen = new Set();\nconst jobs = pages.flatMap(({ json: payload }) => (payload.data || [])\n  .filter(job => job && job.remote === true)\n  .map(job => ({\n    source: 'arbeitnow',\n    external_id: String(job.slug || job.url || ''),\n    company_name: job.company_name || 'Unknown company',\n    title: job.title || '',\n    location: job.location || 'unknown',\n    remote: true,\n    tags: Array.isArray(job.tags) ? job.tags : [],\n    job_types: Array.isArray(job.job_types) ? job.job_types : [],\n    description: job.description || '',\n    source_url: job.url || '',\n    created_at: Number.isInteger(job.created_at) ? job.created_at : null\n  }))\n  .filter(job => job.external_id && job.title && job.source_url))\n  .filter(job => {\n    if (seen.has(job.external_id)) return false;\n    seen.add(job.external_id);\n    return true;\n  });\nreturn [{ json: { jobs, remote_only: true } }];"
       },
       "id": "7b1d1f0a-6a21-4d90-a2d7-3e62a9a1c004",
       "name": "Normalize and keep remote jobs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [780, 400]
+      "position": [
+        1020,
+        400
+      ]
     },
     {
       "parameters": {
@@ -48,22 +92,80 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ $json }}",
-        "options": {"timeout": 60000}
+        "options": {
+          "timeout": 60000
+        }
       },
       "id": "7b1d1f0a-6a21-4d90-a2d7-3e62a9a1c005",
       "name": "Send jobs to ClientFinder",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1060, 400]
+      "position": [
+        1300,
+        400
+      ]
     }
   ],
   "connections": {
-    "Manual Trigger": {"main": [[{"node": "Fetch Arbeitnow", "type": "main", "index": 0}]]},
-    "Every 12 hours": {"main": [[{"node": "Fetch Arbeitnow", "type": "main", "index": 0}]]},
-    "Fetch Arbeitnow": {"main": [[{"node": "Normalize and keep remote jobs", "type": "main", "index": 0}]]},
-    "Normalize and keep remote jobs": {"main": [[{"node": "Send jobs to ClientFinder", "type": "main", "index": 0}]]}
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Generate pages 1-5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 12 hours": {
+      "main": [
+        [
+          {
+            "node": "Generate pages 1-5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Arbeitnow": {
+      "main": [
+        [
+          {
+            "node": "Normalize and keep remote jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize and keep remote jobs": {
+      "main": [
+        [
+          {
+            "node": "Send jobs to ClientFinder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate pages 1-5": {
+      "main": [
+        [
+          {
+            "node": "Fetch Arbeitnow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "active": false,
-  "settings": {"executionOrder": "v1"},
+  "settings": {
+    "executionOrder": "v1"
+  },
   "versionId": "7b1d1f0a-6a21-4d90-a2d7-3e62a9a1c006"
 }
