@@ -43,4 +43,4 @@ class DynamicJobSearchResponse(BaseModel):
     created: int
     updated: int
     unchanged: int
-    results: list
+    results: list[dict]
