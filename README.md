@@ -146,19 +146,15 @@ Check current quotas and pricing at https://exa.ai/pricing/ and the API referenc
 
 ### Job and contract discovery
 
-The structured live Google Jobs integration remains on SerpApi and requires a separate `SERPAPI_API_KEY`. Arbeitnow remains available as a supplementary source.
+ClientFinder's dashboard uses Arbeitnow as its job source. The Jobs page does not call SerpApi and does not require `SERPAPI_API_KEY`. The legacy SerpApi endpoint remains available in the backend but is not part of the dashboard workflow.
 
-```powershell
-$env:SERPAPI_API_KEY = "your-serpapi-key"
-```
-
-Do not assume Exa's company search endpoint is a structured replacement for Google Jobs. The Exa integration currently covers company discovery only.
+Exa's company search endpoint is not used as a structured jobs feed. Arbeitnow is the active job source.
 
 ### Dashboard
 
 - Company discovery: live Exa search with session-only results.
 - Company verification: existing manual verification workflow for records already in the review queue.
-- Jobs: live SerpApi job search plus Arbeitnow sync.
+- Jobs: Arbeitnow sync and saved-listing filters, with Remote only enabled by default.
 
 ### Data boundaries
 
