@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
 from .enrichment import build_company_candidates, normalize_company_key
-from .models import CompanyProspect, CompanyReview, Lead, LeadInteraction, Opportunity, OutreachDraft
+from .models import CompanyProspect, CompanyReview, JobMatch, Lead, LeadInteraction, Opportunity, OutreachDraft
 from .schemas import (
     CompanyReviewCreate,
     CompanyReviewRead,
@@ -28,6 +28,7 @@ from .source_schemas import (
     JobOpportunityPage,
     OpportunityRead,
     OpportunitySyncResult,
+    JobOpportunity,
 )
 from .sources.arbeitnow import ArbeitnowAdapter
 from .sources.serpapi import SerpApiAdapter
@@ -38,6 +39,8 @@ from .discovery_schemas import (
     JobSearchRequest, DynamicJobSearchResponse,
 )
 from .sources.base import SourceContractError, SourceFetchError
+from .job_matching import score_job
+from .matching_schemas import N8nJobBatch, N8nJobIngestResponse, JobMatchRead
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="ClientFinder API", version="0.7.0")
@@ -215,6 +218,129 @@ def sync_arbeitnow_jobs(
         source="arbeitnow", fetched=len(jobs), created=created,
         updated=updated, unchanged=unchanged,
     )
+
+
+
+@app.post("/integrations/n8n/jobs", response_model=N8nJobIngestResponse)
+def ingest_n8n_jobs(payload: N8nJobBatch, db: Session = Depends(get_db)):
+    """Ingest normalized listings from the private n8n workflow and score them for this resume."""
+    created = updated = unchanged = skipped_non_remote = 0
+    matches_created = matches_updated = 0
+    seen: set[tuple[str, str]] = set()
+    now = datetime.now(timezone.utc)
+
+    for job in payload.jobs:
+        if payload.remote_only and not job.remote:
+            skipped_non_remote += 1
+            continue
+        identity = (job.source, job.external_id)
+        if identity in seen:
+            unchanged += 1
+            continue
+        seen.add(identity)
+        values = {
+            "company_name": job.company_name,
+            "title": job.title,
+            "location": job.location,
+            "remote": job.remote,
+            "tags": job.tags,
+            "job_types": job.job_types,
+            "description": job.description,
+            "source_url": str(job.source_url),
+            "source_created_at": job.created_at,
+        }
+        opportunity = db.scalar(
+            select(Opportunity).where(
+                Opportunity.source == job.source,
+                Opportunity.external_id == job.external_id,
+            )
+        )
+        if opportunity is None:
+            opportunity = Opportunity(
+                source=job.source, external_id=job.external_id, **values,
+                first_seen_at=now, last_seen_at=now,
+            )
+            db.add(opportunity)
+            db.flush()
+            created += 1
+        else:
+            changed = any(getattr(opportunity, key) != value for key, value in values.items())
+            opportunity.last_seen_at = now
+            if changed:
+                for key, value in values.items():
+                    setattr(opportunity, key, value)
+                updated += 1
+            else:
+                unchanged += 1
+
+        fit = score_job(
+            title=job.title, description=job.description, tags=job.tags,
+            job_types=job.job_types, remote=job.remote,
+        )
+        match = db.scalar(
+            select(JobMatch).where(JobMatch.opportunity_id == opportunity.id)
+        )
+        match_values = {
+            "match_score": fit.score,
+            "match_category": fit.category,
+            "match_reasons": fit.reasons,
+            "matched_skills": fit.matched_skills,
+            "missing_skills": fit.missing_skills,
+            "evaluated_at": now,
+        }
+        if match is None:
+            db.add(JobMatch(opportunity_id=opportunity.id, **match_values))
+            matches_created += 1
+        else:
+            for key, value in match_values.items():
+                setattr(match, key, value)
+            matches_updated += 1
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A job listing conflicted with another sync; retry") from exc
+
+    return N8nJobIngestResponse(
+        source="n8n", received=len(payload.jobs), skipped_non_remote=skipped_non_remote,
+        created=created, updated=updated, unchanged=unchanged,
+        matches_created=matches_created, matches_updated=matches_updated,
+    )
+
+
+@app.get("/job-matches", response_model=list[JobMatchRead])
+def list_job_matches(
+    min_score: int = Query(default=40, ge=0, le=100),
+    category: str | None = Query(default=None, pattern="^(strong_match|good_match|possible_match|low_match|not_a_fit)$"),
+    remote: bool | None = True,
+    limit: int = Query(default=100, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    statement = (
+        select(JobMatch, Opportunity)
+        .join(Opportunity, Opportunity.id == JobMatch.opportunity_id)
+        .where(JobMatch.match_score >= min_score)
+        .order_by(JobMatch.match_score.desc(), Opportunity.source_created_at.desc())
+        .limit(limit)
+    )
+    if category:
+        statement = statement.where(JobMatch.match_category == category)
+    if remote is not None:
+        statement = statement.where(Opportunity.remote.is_(remote))
+    rows = db.execute(statement).all()
+    return [
+        JobMatchRead(
+            opportunity_id=opportunity.id, source=opportunity.source,
+            company_name=opportunity.company_name, title=opportunity.title,
+            location=opportunity.location, remote=opportunity.remote,
+            tags=opportunity.tags, job_types=opportunity.job_types,
+            source_url=opportunity.source_url, match_score=match.match_score,
+            match_category=match.match_category, match_reasons=match.match_reasons,
+            matched_skills=match.matched_skills, missing_skills=match.missing_skills,
+        )
+        for match, opportunity in rows
+    ]
 
 
 @app.get("/opportunities", response_model=list[OpportunityRead])
