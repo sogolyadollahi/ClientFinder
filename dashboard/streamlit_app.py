@@ -225,22 +225,184 @@ def leads_page():
             st.caption("No drafts saved.")
 
 
-def opportunities_page():
-    st.title("Opportunity feed")
-    st.caption("Job listings are research signals, not proof of agency demand.")
-    col1, col2 = st.columns([1, 3])
-    page = col1.number_input("Arbeitnow page", min_value=1, max_value=100, value=1)
-    if col2.button("Sync Arbeitnow page", type="primary"):
+def company_discovery_page():
+    st.title("Company discovery")
+    st.caption("Live web search for agencies and companies that may need technical delivery support.")
+    with st.form("company_discovery_form"):
+        query = st.text_input(
+            "What kind of company should ClientFinder find?",
+            value="Python automation software agencies",
+        )
+        location = st.text_input("Location / market", value="Germany")
+        country = st.text_input("Google country code", value="DE", max_chars=2)
+        limit = st.slider("Results to fetch", 1, 20, 10)
+        submitted = st.form_submit_button("Search the web", type="primary")
+    if submitted:
+        if not query.strip():
+            st.warning("Enter a search query.")
+        else:
+            try:
+                result = api_request(
+                    "POST",
+                    "/discovery/companies/search",
+                    json={
+                        "query": query.strip(),
+                        "location": location.strip() or None,
+                        "country": country.strip().upper() or None,
+                        "limit": limit,
+                    },
+                )
+                st.success(
+                    f'Fetched {result["fetched"]} results · '
+                    f'{result["created"]} new · {result["updated"]} refreshed.'
+                )
+            except APIError as error:
+                show_api_error(error)
+
+    st.subheader("Discovered companies")
+    minimum_score = st.slider("Minimum fit score", 0, 100, 0, key="company_min_score")
+    try:
+        prospects = api_request(
+            "GET", "/company-prospects",
+            params={"min_score": minimum_score, "limit": 200},
+        )
+    except APIError as error:
+        show_api_error(error)
+        return
+    if not prospects:
+        st.info("No company prospects yet. Run a live search above.")
+        return
+
+    st.dataframe(
+        pd.DataFrame([
+            {
+                "ID": item["id"], "Company / result title": item["company_name"],
+                "Fit score": item["qualification_score"], "Location": item["location"],
+                "Source": item["source_url"], "Search": item["search_query"],
+            } for item in prospects
+        ]),
+        use_container_width=True,
+        hide_index=True,
+    )
+    labels = {
+        f'{item["company_name"]} · #{item["id"]} · score {item["qualification_score"]}': item["id"]
+        for item in prospects
+    }
+    selected = st.selectbox("Select a company to review", list(labels))
+    selected_id = labels[selected]
+    selected_item = next(item for item in prospects if item["id"] == selected_id)
+    st.markdown(f'**Source page:** [{selected_item["source_url"]}]({selected_item["source_url"]})')
+    st.write(selected_item["snippet"])
+    st.caption("Fit score is a keyword-based prioritization signal, not a probability.")
+    if st.button("Move to manual verification queue", type="primary"):
         try:
-            result = api_request("POST", "/sources/arbeitnow/sync", params={"page": int(page)})
-            st.success(
-                f'Fetched {result["fetched"]}: {result["created"]} created, '
-                f'{result["updated"]} updated, {result["unchanged"]} unchanged.'
-            )
+            review = api_request("POST", f"/company-prospects/{selected_id}/review")
+            st.success(f'Company moved to review queue (review #{review["id"]}).')
         except APIError as error:
             show_api_error(error)
 
-    keyword = st.text_input("Search company, role or description")
+
+def company_reviews_page():
+    st.title("Company verification")
+    st.caption("Confirm the official domain manually before promoting a company to Leads.")
+    status = st.selectbox("Review status", ["pending", "verified", "rejected"])
+    try:
+        reviews = api_request("GET", "/companies/reviews", params={"status": status, "limit": 200})
+    except APIError as error:
+        show_api_error(error)
+        return
+    if not reviews:
+        st.info("No companies in this review state.")
+        return
+    options = {
+        f'{item["company_name"]} · review #{item["id"]}': item["id"]
+        for item in reviews
+    }
+    selected = st.selectbox("Company", list(options))
+    review_id = options[selected]
+    review = next(item for item in reviews if item["id"] == review_id)
+    st.write(f'**Current website:** {review["official_website"] or "Not verified"}')
+    st.write(f'**Notes:** {review["verification_notes"] or "None"}')
+    with st.form(f"verify_company_{review_id}"):
+        website = st.text_input("Official website", value=review["official_website"] or "")
+        next_status = st.selectbox(
+            "Verification status", ["pending", "verified", "rejected"],
+            index=["pending", "verified", "rejected"].index(review["verification_status"]),
+        )
+        notes = st.text_area("Verification notes", value=review["verification_notes"])
+        submitted = st.form_submit_button("Save verification")
+    if submitted:
+        payload = {
+            "verification_status": next_status,
+            "verification_notes": notes,
+        }
+        if website.strip():
+            payload["official_website"] = website.strip()
+        try:
+            api_request("PATCH", f"/companies/reviews/{review_id}", json=payload)
+            st.success("Review updated.")
+            st.rerun()
+        except APIError as error:
+            show_api_error(error)
+
+    if review["verification_status"] == "verified":
+        st.divider()
+        if st.button("Promote verified company to Leads", type="primary"):
+            try:
+                promoted = api_request("POST", f"/companies/reviews/{review_id}/promote")
+                st.success(f'Lead #{promoted["lead"]["id"]} created.')
+            except APIError as error:
+                show_api_error(error)
+
+
+def opportunities_page():
+    st.title("Job and contract discovery")
+    st.caption("Live job search is separate from company prospect discovery.")
+    with st.form("job_discovery_form"):
+        query = st.text_input(
+            "Role / contract query",
+            value="Python backend developer OR automation contractor",
+        )
+        location = st.text_input("Location", value="Germany")
+        country = st.text_input("Google country code", value="DE", max_chars=2)
+        limit = st.slider("Jobs to fetch", 1, 20, 10)
+        submitted = st.form_submit_button("Search live jobs", type="primary")
+    if submitted:
+        if not query.strip():
+            st.warning("Enter a job or contract query.")
+        else:
+            try:
+                result = api_request(
+                    "POST",
+                    "/discovery/jobs/search",
+                    json={
+                        "query": query.strip(),
+                        "location": location.strip() or None,
+                        "country": country.strip().upper() or None,
+                        "limit": limit,
+                    },
+                )
+                st.success(
+                    f'Fetched {result["fetched"]} jobs · {result["created"]} new · '
+                    f'{result["updated"]} updated · {result["unchanged"]} unchanged.'
+                )
+            except APIError as error:
+                show_api_error(error)
+
+    with st.expander("Supplementary source: Arbeitnow"):
+        col1, col2 = st.columns([1, 3])
+        page = col1.number_input("Arbeitnow page", min_value=1, max_value=100, value=1)
+        if col2.button("Sync Arbeitnow page"):
+            try:
+                result = api_request("POST", "/sources/arbeitnow/sync", params={"page": int(page)})
+                st.success(
+                    f'Fetched {result["fetched"]}: {result["created"]} created, '
+                    f'{result["updated"]} updated, {result["unchanged"]} unchanged.'
+                )
+            except APIError as error:
+                show_api_error(error)
+
+    keyword = st.text_input("Filter saved job listings")
     remote_only = st.checkbox("Remote only")
     params = {"limit": 200}
     if keyword.strip():
@@ -252,33 +414,37 @@ def opportunities_page():
     except APIError as error:
         show_api_error(error)
         return
-
     if opportunities:
         st.dataframe(
             pd.DataFrame([
                 {
                     "Company": item["company_name"], "Role": item["title"],
                     "Location": item["location"], "Remote": item["remote"],
-                    "Tags": ", ".join(item["tags"]), "Source": item["source_url"],
-                }
-                for item in opportunities
+                    "Source": item["source"], "Tags": ", ".join(item["tags"]),
+                    "Listing": item["source_url"],
+                } for item in opportunities
             ]),
             use_container_width=True,
             hide_index=True,
         )
     else:
-        st.info("No opportunities found. Try syncing a source page.")
+        st.info("No saved jobs yet. Run a live search or sync Arbeitnow.")
+
 
 
 def main():
     st.set_page_config(page_title="ClientFinder", page_icon="🎯", layout="wide")
     st.sidebar.title("ClientFinder")
     st.sidebar.caption("API-backed workspace")
-    page = st.sidebar.radio("Workspace", ["Overview", "Leads", "Opportunities"])
+    page = st.sidebar.radio("Workspace", ["Overview", "Leads", "Company discovery", "Company verification", "Jobs"])
     if page == "Overview":
         overview_page()
     elif page == "Leads":
         leads_page()
+    elif page == "Company discovery":
+        company_discovery_page()
+    elif page == "Company verification":
+        company_reviews_page()
     else:
         opportunities_page()
     st.sidebar.divider()
