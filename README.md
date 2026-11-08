@@ -120,6 +120,40 @@ Set CLIENTFINDER_API_URL if the API is hosted somewhere other than http://127.0.
 The dashboard is intended for trusted local use. The API currently has no authentication; do not expose either service publicly without adding authentication, authorization, and deployment hardening.
 
 
+
+## Personalized job matching — Phase 8
+
+ClientFinder now ranks job listings against the candidate profile in the resume rather than treating every Python-related vacancy equally.
+
+### Current candidate profile
+
+- Target roles: Junior Python Backend Developer, Python Developer, Backend Engineer (junior/entry-level), Python Automation Developer, Automation / API Integration Developer.
+- Core skills: Python, FastAPI, Flask, Django, REST APIs, API integration, PostgreSQL, SQLAlchemy, Docker, Pytest, GitHub Actions, JWT, Linux, Git.
+- Seniority: junior / entry-level / internship / graduate / associate. Senior, lead, staff, principal, architect, manager and director titles are excluded.
+- Current source filter: remote listings only.
+- Scoring: role-title relevance, resume-skill overlap, seniority signal, remote status and employment type. Scores prioritize review; they are not hiring probabilities.
+- Work authorization, country eligibility, language requirements, salary and sponsorship are not inferred from a listing and must be checked manually.
+
+### n8n workflow
+
+The importable workflow is `n8n/clientfinder-remote-jobs.json`. It:
+1. Runs manually or every 12 hours.
+2. Fetches a page from the public Arbeitnow API.
+3. Keeps remote listings and normalizes their fields.
+4. Sends them to `POST /integrations/n8n/jobs`.
+5. ClientFinder deduplicates records and stores a resume-fit score.
+
+Start the API first, then start n8n in a separate terminal:
+
+```powershell
+docker compose -f docker-compose.n8n.yml up -d
+```
+
+Open http://localhost:5678, complete n8n's first-run owner setup, import the workflow JSON, and execute it manually once. The workflow uses `http://host.docker.internal:8000` to reach FastAPI from Docker Desktop on Windows. If the API runs somewhere else, edit the final HTTP Request node URL.
+
+The Streamlit Jobs page reads ranked results from `GET /job-matches`. A new `job_matches` table is created automatically; existing Opportunity records are not altered. Keep FastAPI and n8n private/local because the API currently has no authentication.
+
+
 ## Phase 7 — Dynamic discovery
 
 ### Company discovery — Exa
