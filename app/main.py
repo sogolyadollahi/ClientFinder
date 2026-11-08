@@ -31,8 +31,10 @@ from .source_schemas import (
 )
 from .sources.arbeitnow import ArbeitnowAdapter
 from .sources.serpapi import SerpApiAdapter
+from .sources.exa import ExaAdapter
 from .discovery_schemas import (
     CompanySearchRequest, CompanySearchResponse, CompanyProspectRead, CompanyDiscoveryResult,
+    LiveCompanySearchResponse,
     JobSearchRequest, DynamicJobSearchResponse,
 )
 from .sources.base import SourceContractError, SourceFetchError
@@ -529,71 +531,26 @@ def _score_company_result(name: str, snippet: str) -> tuple[int, list[str]]:
     return min(score, 100), reasons
 
 
-@app.post("/discovery/companies/search", response_model=CompanySearchResponse)
-def search_companies(payload: CompanySearchRequest, db: Session = Depends(get_db)):
-    """Run a live web search and persist deduplicated company research candidates."""
+@app.post("/discovery/companies/search", response_model=LiveCompanySearchResponse)
+def search_companies(payload: CompanySearchRequest):
+    """Run Exa company discovery and return results without persisting provider output."""
     try:
-        results = SerpApiAdapter().search_companies(
+        results = ExaAdapter().search_companies(
             query=payload.query, location=payload.location,
             country=payload.country, limit=payload.limit,
         )
     except SourceFetchError as exc:
-        status_code = 503 if "SERPAPI_API_KEY is not configured" in str(exc) else 502
+        status_code = 503 if "EXA_API_KEY is not configured" in str(exc) else 502
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     except SourceContractError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    created = updated = 0
-    returned = []
-    now = datetime.now(timezone.utc)
+    scored = []
     for item in results:
-        name = item["company_name"]
-        key = normalize_company_key(name)
-        if not key:
-            continue
-        score, reasons = _score_company_result(name, item["snippet"])
-        existing = db.scalar(select(CompanyProspect).where(
-            CompanyProspect.source == item["source"],
-            CompanyProspect.external_id == item["external_id"],
-        ))
-        values = {
-            "company_name": name, "normalized_key": key,
-            "source_url": item["source_url"], "snippet": item["snippet"],
-            "location": item["location"], "search_query": item["search_query"],
-            "qualification_score": score, "score_reasons": reasons,
-            "last_seen_at": now,
-        }
-        if existing is None:
-            existing = CompanyProspect(
-                source=item["source"], external_id=item["external_id"],
-                first_seen_at=now, **values,
-            )
-            db.add(existing)
-            created += 1
-        else:
-            for field, value in values.items():
-                setattr(existing, field, value)
-            updated += 1
-        returned.append(existing)
-
-    db.commit()
-    for prospect in returned:
-        db.refresh(prospect)
-    return CompanySearchResponse(
-        query=payload.query, source="serpapi_google",
-        fetched=len(results), created=created, updated=updated,
-        results=[
-            CompanyDiscoveryResult(
-                id=item.id, source=item.source, company_name=item.company_name,
-                normalized_key=item.normalized_key, source_url=item.source_url,
-                snippet=item.snippet, location=item.location,
-                search_query=item.search_query,
-                qualification_score=item.qualification_score,
-                score_reasons=item.score_reasons or [],
-            ) for item in returned
-        ],
+        score, reasons = _score_company_result(item["company_name"], item["snippet"])
+        scored.append({**item, "qualification_score": score, "score_reasons": reasons})
+    return LiveCompanySearchResponse(
+        query=payload.query, source="exa_company_search", fetched=len(scored), results=scored
     )
-
 
 @app.get("/company-prospects", response_model=list[CompanyProspectRead])
 def list_company_prospects(
