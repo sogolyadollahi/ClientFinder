@@ -584,7 +584,7 @@ def search_companies(payload: CompanySearchRequest, db: Session = Depends(get_db
         fetched=len(results), created=created, updated=updated,
         results=[
             CompanyProspectRead(
-                id=item.id, company_name=item.company_name,
+                id=item.id, source=item.source, company_name=item.company_name,
                 normalized_key=item.normalized_key, source_url=item.source_url,
                 snippet=item.snippet, location=item.location,
                 search_query=item.search_query,
