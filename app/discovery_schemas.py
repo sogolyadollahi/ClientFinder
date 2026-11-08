@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class CompanySearchRequest(BaseModel):
@@ -47,6 +47,8 @@ class DynamicJobSearchResponse(BaseModel):
 
 
 class CompanyProspectRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     source: str
     company_name: str
