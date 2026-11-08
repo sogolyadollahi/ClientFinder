@@ -328,8 +328,7 @@ def opportunities_page():
             "Match quality",
             ["All", "Strong match", "Good match", "Possible match"],
         )
-        if st.button("Refresh matches", type="primary"):
-            st.session_state["refresh_job_matches"] = True
+        st.button("Refresh matches", type="primary")
     with right:
         st.info(
             "Run the imported n8n workflow to collect remote jobs. "
