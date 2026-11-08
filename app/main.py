@@ -32,7 +32,7 @@ from .source_schemas import (
 from .sources.arbeitnow import ArbeitnowAdapter
 from .sources.serpapi import SerpApiAdapter
 from .discovery_schemas import (
-    CompanySearchRequest, CompanySearchResponse, CompanyProspectRead,
+    CompanySearchRequest, CompanySearchResponse, CompanyProspectRead, CompanyDiscoveryResult,
     JobSearchRequest, DynamicJobSearchResponse,
 )
 from .sources.base import SourceContractError, SourceFetchError
@@ -583,7 +583,7 @@ def search_companies(payload: CompanySearchRequest, db: Session = Depends(get_db
         query=payload.query, source="serpapi_google",
         fetched=len(results), created=created, updated=updated,
         results=[
-            CompanyProspectRead(
+            CompanyDiscoveryResult(
                 id=item.id, source=item.source, company_name=item.company_name,
                 normalized_key=item.normalized_key, source_url=item.source_url,
                 snippet=item.snippet, location=item.location,
