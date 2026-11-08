@@ -59,3 +59,21 @@ class CompanyProspectRead(BaseModel):
     search_query: str
     qualification_score: int
     score_reasons: list[str]
+
+
+class LiveCompanyDiscoveryResult(BaseModel):
+    company_name: str
+    source_url: HttpUrl
+    snippet: str = ""
+    location: str
+    source: str
+    search_query: str
+    qualification_score: int = Field(ge=0, le=100)
+    score_reasons: list[str]
+
+
+class LiveCompanySearchResponse(BaseModel):
+    query: str
+    source: str
+    fetched: int
+    results: list[LiveCompanyDiscoveryResult]
