@@ -110,3 +110,29 @@ class OutreachDraft(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class CompanyProspect(Base):
+    __tablename__ = "company_prospects"
+    __table_args__ = (
+        UniqueConstraint("source", "external_id", name="uq_company_prospect_source_external_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    source: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    external_id: Mapped[str] = mapped_column(String(1000), nullable=False)
+    company_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    normalized_key: Mapped[str] = mapped_column(String(250), nullable=False, index=True)
+    source_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    location: Mapped[str] = mapped_column(String(200), default="unknown")
+    search_query: Mapped[str] = mapped_column(String(300), default="")
+    qualification_score: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
