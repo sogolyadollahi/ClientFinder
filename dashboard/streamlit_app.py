@@ -227,79 +227,41 @@ def leads_page():
 
 def company_discovery_page():
     st.title("Company discovery")
-    st.caption("Live web search for agencies and companies that may need technical delivery support.")
+    st.caption("Exa live search. Results are displayed for this session and are not saved to the ClientFinder database.")
     with st.form("company_discovery_form"):
-        query = st.text_input(
-            "What kind of company should ClientFinder find?",
-            value="Python automation software agencies",
-        )
+        query = st.text_input("What kind of company should ClientFinder find?", value="Python automation software agencies")
         location = st.text_input("Location / market", value="Germany")
-        country = st.text_input("Google country code", value="DE", max_chars=2)
+        country = st.text_input("Country code", value="DE", max_chars=2)
         limit = st.slider("Results to fetch", 1, 20, 10)
-        submitted = st.form_submit_button("Search the web", type="primary")
+        submitted = st.form_submit_button("Search with Exa", type="primary")
     if submitted:
         if not query.strip():
             st.warning("Enter a search query.")
         else:
             try:
-                result = api_request(
-                    "POST",
-                    "/discovery/companies/search",
-                    json={
-                        "query": query.strip(),
-                        "location": location.strip() or None,
-                        "country": country.strip().upper() or None,
-                        "limit": limit,
-                    },
-                )
-                st.success(
-                    f'Fetched {result["fetched"]} results · '
-                    f'{result["created"]} new · {result["updated"]} refreshed.'
-                )
+                result = api_request("POST", "/discovery/companies/search", json={
+                    "query": query.strip(), "location": location.strip() or None,
+                    "country": country.strip().upper() or None, "limit": limit,
+                })
+                st.session_state["exa_company_results"] = result["results"]
+                st.success(f'Exa returned {result["fetched"]} company-related results.')
             except APIError as error:
                 show_api_error(error)
-
-    st.subheader("Discovered companies")
-    minimum_score = st.slider("Minimum fit score", 0, 100, 0, key="company_min_score")
-    try:
-        prospects = api_request(
-            "GET", "/company-prospects",
-            params={"min_score": minimum_score, "limit": 200},
-        )
-    except APIError as error:
-        show_api_error(error)
+    results = st.session_state.get("exa_company_results", [])
+    if not results:
+        st.info("Run a search to see company-related results.")
         return
-    if not prospects:
-        st.info("No company prospects yet. Run a live search above.")
-        return
-
-    st.dataframe(
-        pd.DataFrame([
-            {
-                "ID": item["id"], "Company / result title": item["company_name"],
-                "Fit score": item["qualification_score"], "Location": item["location"],
-                "Source": item["source_url"], "Search": item["search_query"],
-            } for item in prospects
-        ]),
-        use_container_width=True,
-        hide_index=True,
-    )
-    labels = {
-        f'{item["company_name"]} · #{item["id"]} · score {item["qualification_score"]}': item["id"]
-        for item in prospects
-    }
-    selected = st.selectbox("Select a company to review", list(labels))
-    selected_id = labels[selected]
-    selected_item = next(item for item in prospects if item["id"] == selected_id)
-    st.markdown(f'**Source page:** [{selected_item["source_url"]}]({selected_item["source_url"]})')
-    st.write(selected_item["snippet"])
-    st.caption("Fit score is a keyword-based prioritization signal, not a probability.")
-    if st.button("Move to manual verification queue", type="primary"):
-        try:
-            review = api_request("POST", f"/company-prospects/{selected_id}/review")
-            st.success(f'Company moved to review queue (review #{review["id"]}).')
-        except APIError as error:
-            show_api_error(error)
+    st.dataframe(pd.DataFrame([{
+        "Result title (not verified company name)": item["company_name"],
+        "Fit score": item["qualification_score"], "Location context": item["location"],
+        "URL": item["source_url"], "Evidence": item["snippet"],
+    } for item in results]), use_container_width=True, hide_index=True)
+    selected_index = st.selectbox("Inspect result", range(len(results)),
+        format_func=lambda i: f'{results[i]["company_name"]} · score {results[i]["qualification_score"]}')
+    selected = results[selected_index]
+    st.markdown(f'**Source page:** [{selected["source_url"]}]({selected["source_url"]})')
+    st.write(selected["snippet"] or "No highlights returned.")
+    st.caption("The title may be a page title, not a verified legal company name. Verify the company and official domain manually before adding it as a Lead.")
 
 
 def company_reviews_page():
