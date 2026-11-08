@@ -280,8 +280,6 @@ def create_company_review(
         normalized_key=payload.normalized_key,
         company_name=candidate["company_name"],
         verification_status="pending",
-        source_url=candidate.get("source_url"),
-        research_summary="\\n".join(candidate.get("evidence", [])),
     )
     db.add(review)
     try:
@@ -628,8 +626,6 @@ def review_company_prospect(prospect_id: int, db: Session = Depends(get_db)):
     review = CompanyReview(
         normalized_key=prospect.normalized_key,
         company_name=prospect.company_name,
-        source_url=prospect.source_url,
-        research_summary=prospect.snippet,
         verification_status="pending",
     )
     db.add(review)
