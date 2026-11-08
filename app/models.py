@@ -67,6 +67,8 @@ class CompanyReview(Base):
     official_website: Mapped[str | None] = mapped_column(String(500), nullable=True)
     verification_status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     verification_notes: Mapped[str] = mapped_column(Text, default="")
+    source_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    research_summary: Mapped[str] = mapped_column(Text, default="")
     lead_id: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
