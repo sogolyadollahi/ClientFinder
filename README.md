@@ -138,7 +138,7 @@ ClientFinder now ranks job listings against the candidate profile in the resume 
 
 The importable workflow is `n8n/clientfinder-remote-jobs.json`. It:
 1. Runs manually or every 12 hours.
-2. Fetches a page from the public Arbeitnow API.
+2. Fetches the first five pages from the public Arbeitnow API.
 3. Keeps remote listings and normalizes their fields.
 4. Sends them to `POST /integrations/n8n/jobs`.
 5. ClientFinder deduplicates records and stores a resume-fit score.
