@@ -318,55 +318,75 @@ def company_reviews_page():
 
 
 def opportunities_page():
-    st.title("Remote job and contract discovery")
-    st.caption("Arbeitnow is the active job source. SerpApi is not required for this workflow.")
+    st.title("Personalized job matches")
+    st.caption("Ranked against your Python backend and automation resume. n8n collects remote listings; ClientFinder scores them.")
 
-    with st.expander("Sync jobs from Arbeitnow", expanded=True):
-        st.write("Fetch the latest available page from Arbeitnow and save listings locally.")
-        page = st.number_input("Arbeitnow page", min_value=1, max_value=100, value=1)
-        if st.button("Sync Arbeitnow", type="primary"):
-            try:
-                result = api_request(
-                    "POST", "/sources/arbeitnow/sync", params={"page": int(page)}
-                )
-                st.success(
-                    f'Fetched {result["fetched"]}: {result["created"]} created, '
-                    f'{result["updated"]} updated, {result["unchanged"]} unchanged.'
-                )
-            except APIError as error:
-                show_api_error(error)
+    left, right = st.columns([1, 2])
+    with left:
+        minimum_score = st.slider("Minimum fit score", 0, 100, 40)
+        category = st.selectbox(
+            "Match quality",
+            ["All", "Strong match", "Good match", "Possible match"],
+        )
+        if st.button("Refresh matches", type="primary"):
+            st.session_state["refresh_job_matches"] = True
+    with right:
+        st.info(
+            "Run the imported n8n workflow to collect remote jobs. "
+            "It runs manually or every 12 hours and sends listings to the local API."
+        )
 
-    st.subheader("Saved opportunities")
-    keyword = st.text_input("Filter by role, company, or keyword")
-    remote_only = st.checkbox("Remote only", value=True)
-    params = {"limit": 200, "source": "arbeitnow"}
-    if keyword.strip():
-        params["keyword"] = keyword.strip()
-    if remote_only:
-        params["remote"] = True
-
+    params = {"min_score": minimum_score, "remote": True, "limit": 200}
+    if category != "All":
+        params["category"] = category.lower().replace(" ", "_")
     try:
-        opportunities = api_request("GET", "/opportunities", params=params)
+        matches = api_request("GET", "/job-matches", params=params)
     except APIError as error:
         show_api_error(error)
         return
 
-    if opportunities:
-        st.dataframe(
-            pd.DataFrame([
-                {
-                    "Company": item["company_name"], "Role": item["title"],
-                    "Location": item["location"], "Remote": item["remote"],
-                    "Tags": ", ".join(item["tags"]), "Listing": item["source_url"],
-                } for item in opportunities
-            ]),
-            use_container_width=True,
-            hide_index=True,
+    if not matches:
+        st.warning(
+            "No matching jobs yet. Import and run n8n/clientfinder-remote-jobs.json, "
+            "then refresh this page."
         )
-    else:
-        st.info(
-            "No matching saved Arbeitnow listings. Sync a page above, or broaden the keyword filter."
-        )
+        return
+
+    st.metric("Matching remote positions", len(matches))
+    st.dataframe(
+        pd.DataFrame([{
+            "Fit": item["match_score"],
+            "Match": item["match_category"].replace("_", " ").title(),
+            "Role": item["title"],
+            "Company": item["company_name"],
+            "Location": item["location"],
+            "Matched skills": ", ".join(item["matched_skills"]),
+            "Source": item["source"],
+            "URL": item["source_url"],
+        } for item in matches]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    options = {
+        f'{item["match_score"]}/100 · {item["title"]} · {item["company_name"]}': index
+        for index, item in enumerate(matches)
+    }
+    selected_index = st.selectbox("Inspect a position", list(options), key="matched_job_selection")
+    selected = matches[options[selected_index]]
+    st.subheader(selected["title"])
+    st.write(f'**Company:** {selected["company_name"]}')
+    st.write(f'**Location:** {selected["location"]} · **Remote:** {selected["remote"]}')
+    st.markdown(f'**Apply / listing:** [{selected["source_url"]}]({selected["source_url"]})')
+    st.markdown("**Why it matches**")
+    for reason in selected["match_reasons"]:
+        st.write(f"• {reason}")
+    st.write("**Matched skills:** " + (", ".join(selected["matched_skills"]) or "None detected"))
+    st.write("**Skills not found in the listing:** " + (", ".join(selected["missing_skills"]) or "None"))
+    st.caption(
+        "Fit score is a deterministic prioritization estimate, not an acceptance probability. "
+        "Location and work-authorization eligibility still require manual verification."
+    )
 
 
 
