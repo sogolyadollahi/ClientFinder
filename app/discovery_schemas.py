@@ -44,3 +44,16 @@ class DynamicJobSearchResponse(BaseModel):
     updated: int
     unchanged: int
     results: list[dict]
+
+
+class CompanyProspectRead(BaseModel):
+    id: int
+    source: str
+    company_name: str
+    normalized_key: str
+    source_url: HttpUrl
+    snippet: str
+    location: str
+    search_query: str
+    qualification_score: int
+    score_reasons: list[str]
