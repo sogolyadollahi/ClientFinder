@@ -318,45 +318,17 @@ def company_reviews_page():
 
 
 def opportunities_page():
-    st.title("Job and contract discovery")
-    st.caption("Live job search is separate from company prospect discovery.")
-    with st.form("job_discovery_form"):
-        query = st.text_input(
-            "Role / contract query",
-            value="Python backend developer OR automation contractor",
-        )
-        location = st.text_input("Location", value="Germany")
-        country = st.text_input("Google country code", value="DE", max_chars=2)
-        limit = st.slider("Jobs to fetch", 1, 20, 10)
-        submitted = st.form_submit_button("Search live jobs", type="primary")
-    if submitted:
-        if not query.strip():
-            st.warning("Enter a job or contract query.")
-        else:
+    st.title("Remote job and contract discovery")
+    st.caption("Arbeitnow is the active job source. SerpApi is not required for this workflow.")
+
+    with st.expander("Sync jobs from Arbeitnow", expanded=True):
+        st.write("Fetch the latest available page from Arbeitnow and save listings locally.")
+        page = st.number_input("Arbeitnow page", min_value=1, max_value=100, value=1)
+        if st.button("Sync Arbeitnow", type="primary"):
             try:
                 result = api_request(
-                    "POST",
-                    "/discovery/jobs/search",
-                    json={
-                        "query": query.strip(),
-                        "location": location.strip() or None,
-                        "country": country.strip().upper() or None,
-                        "limit": limit,
-                    },
+                    "POST", "/sources/arbeitnow/sync", params={"page": int(page)}
                 )
-                st.success(
-                    f'Fetched {result["fetched"]} jobs · {result["created"]} new · '
-                    f'{result["updated"]} updated · {result["unchanged"]} unchanged.'
-                )
-            except APIError as error:
-                show_api_error(error)
-
-    with st.expander("Supplementary source: Arbeitnow"):
-        col1, col2 = st.columns([1, 3])
-        page = col1.number_input("Arbeitnow page", min_value=1, max_value=100, value=1)
-        if col2.button("Sync Arbeitnow page"):
-            try:
-                result = api_request("POST", "/sources/arbeitnow/sync", params={"page": int(page)})
                 st.success(
                     f'Fetched {result["fetched"]}: {result["created"]} created, '
                     f'{result["updated"]} updated, {result["unchanged"]} unchanged.'
@@ -364,33 +336,37 @@ def opportunities_page():
             except APIError as error:
                 show_api_error(error)
 
-    keyword = st.text_input("Filter saved job listings")
-    remote_only = st.checkbox("Remote only")
-    params = {"limit": 200}
+    st.subheader("Saved opportunities")
+    keyword = st.text_input("Filter by role, company, or keyword")
+    remote_only = st.checkbox("Remote only", value=True)
+    params = {"limit": 200, "source": "arbeitnow"}
     if keyword.strip():
         params["keyword"] = keyword.strip()
     if remote_only:
         params["remote"] = True
+
     try:
         opportunities = api_request("GET", "/opportunities", params=params)
     except APIError as error:
         show_api_error(error)
         return
+
     if opportunities:
         st.dataframe(
             pd.DataFrame([
                 {
                     "Company": item["company_name"], "Role": item["title"],
                     "Location": item["location"], "Remote": item["remote"],
-                    "Source": item["source"], "Tags": ", ".join(item["tags"]),
-                    "Listing": item["source_url"],
+                    "Tags": ", ".join(item["tags"]), "Listing": item["source_url"],
                 } for item in opportunities
             ]),
             use_container_width=True,
             hide_index=True,
         )
     else:
-        st.info("No saved jobs yet. Run a live search or sync Arbeitnow.")
+        st.info(
+            "No matching saved Arbeitnow listings. Sync a page above, or broaden the keyword filter."
+        )
 
 
 
