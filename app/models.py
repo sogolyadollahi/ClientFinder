@@ -136,3 +136,22 @@ class CompanyProspect(Base):
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+class JobMatch(Base):
+    __tablename__ = "job_matches"
+    __table_args__ = (UniqueConstraint("opportunity_id", name="uq_job_match_opportunity_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    opportunity_id: Mapped[int] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    match_score: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    match_category: Mapped[str] = mapped_column(String(30), default="low_match", index=True)
+    match_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    matched_skills: Mapped[list[str]] = mapped_column(JSON, default=list)
+    missing_skills: Mapped[list[str]] = mapped_column(JSON, default=list)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
