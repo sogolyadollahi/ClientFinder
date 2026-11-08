@@ -7,8 +7,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
-from .enrichment import build_company_candidates
-from .models import CompanyReview, Lead, LeadInteraction, Opportunity, OutreachDraft
+from .enrichment import build_company_candidates, normalize_company_key
+from .models import CompanyProspect, CompanyReview, Lead, LeadInteraction, Opportunity, OutreachDraft
 from .schemas import (
     CompanyReviewCreate,
     CompanyReviewRead,
@@ -30,6 +30,11 @@ from .source_schemas import (
     OpportunitySyncResult,
 )
 from .sources.arbeitnow import ArbeitnowAdapter
+from .sources.serpapi import SerpApiAdapter
+from .discovery_schemas import (
+    CompanySearchRequest, CompanySearchResponse, CompanyProspectRead,
+    JobSearchRequest, DynamicJobSearchResponse,
+)
 from .sources.base import SourceContractError, SourceFetchError
 
 Base.metadata.create_all(bind=engine)
@@ -50,14 +55,27 @@ def canonicalize_website(url: str) -> str:
 
 def _candidate_for_key(db: Session, normalized_key: str) -> dict | None:
     records = db.scalars(select(Opportunity)).all()
-    return next(
-        (
-            candidate
-            for candidate in build_company_candidates(records)
-            if candidate["normalized_key"] == normalized_key
-        ),
+    candidate = next(
+        (item for item in build_company_candidates(records)
+         if item["normalized_key"] == normalized_key),
         None,
     )
+    if candidate is not None:
+        return candidate
+    prospect = db.scalar(
+        select(CompanyProspect)
+        .where(CompanyProspect.normalized_key == normalized_key)
+        .order_by(CompanyProspect.qualification_score.desc())
+    )
+    if prospect is None:
+        return None
+    return {
+        "company_name": prospect.company_name,
+        "detected_skills": [],
+        "evidence": [prospect.snippet] if prospect.snippet else [],
+        "score_reasons": list(prospect.score_reasons or []),
+        "locations": [prospect.location] if prospect.location != "unknown" else [],
+    }
 
 
 @app.get("/health")
@@ -262,6 +280,8 @@ def create_company_review(
         normalized_key=payload.normalized_key,
         company_name=candidate["company_name"],
         verification_status="pending",
+        source_url=candidate.get("source_url"),
+        research_summary="\\n".join(candidate.get("evidence", [])),
     )
     db.add(review)
     try:
@@ -488,4 +508,195 @@ def get_pipeline_summary(db: Session = Depends(get_db)):
         by_status=by_status,
         total_interactions=db.scalar(select(func.count(LeadInteraction.id))) or 0,
         total_drafts=db.scalar(select(func.count(OutreachDraft.id))) or 0,
+    )
+
+
+def _score_company_result(name: str, snippet: str) -> tuple[int, list[str]]:
+    """Prioritize likely buyers/partners using explainable keyword signals only."""
+    text = f"{name} {snippet}".lower()
+    groups = {
+        "agency_or_consultancy": (25, ("agency", "consultancy", "consulting", "staff augmentation", "outsourcing")),
+        "software_services": (25, ("software development", "web development", "it services", "custom software")),
+        "automation_or_integration": (25, ("automation", "workflow", "api integration", "crm integration", "ai integration")),
+        "technical_delivery": (15, ("python", "backend", "saas", "cloud", "devops", "data engineering")),
+    }
+    score = 0
+    reasons = []
+    for label, (points, keywords) in groups.items():
+        if any(keyword in text for keyword in keywords):
+            score += points
+            reasons.append(f"{points} points: {label.replace('_', ' ')} signal")
+    if not reasons:
+        reasons.append("No strong service-fit signal; manual review required")
+    return min(score, 100), reasons
+
+
+@app.post("/discovery/companies/search", response_model=CompanySearchResponse)
+def search_companies(payload: CompanySearchRequest, db: Session = Depends(get_db)):
+    """Run a live web search and persist deduplicated company research candidates."""
+    try:
+        results = SerpApiAdapter().search_companies(
+            query=payload.query, location=payload.location,
+            country=payload.country, limit=payload.limit,
+        )
+    except SourceFetchError as exc:
+        status_code = 503 if "SERPAPI_API_KEY is not configured" in str(exc) else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except SourceContractError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    created = updated = 0
+    returned = []
+    now = datetime.now(timezone.utc)
+    for item in results:
+        name = item["company_name"]
+        key = normalize_company_key(name)
+        if not key:
+            continue
+        score, reasons = _score_company_result(name, item["snippet"])
+        existing = db.scalar(select(CompanyProspect).where(
+            CompanyProspect.source == item["source"],
+            CompanyProspect.external_id == item["external_id"],
+        ))
+        values = {
+            "company_name": name, "normalized_key": key,
+            "source_url": item["source_url"], "snippet": item["snippet"],
+            "location": item["location"], "search_query": item["search_query"],
+            "qualification_score": score, "score_reasons": reasons,
+            "last_seen_at": now,
+        }
+        if existing is None:
+            existing = CompanyProspect(
+                source=item["source"], external_id=item["external_id"],
+                first_seen_at=now, **values,
+            )
+            db.add(existing)
+            created += 1
+        else:
+            for field, value in values.items():
+                setattr(existing, field, value)
+            updated += 1
+        returned.append(existing)
+
+    db.commit()
+    for prospect in returned:
+        db.refresh(prospect)
+    return CompanySearchResponse(
+        query=payload.query, source="serpapi_google",
+        fetched=len(results), created=created, updated=updated,
+        results=[
+            CompanyProspectRead(
+                id=item.id, company_name=item.company_name,
+                normalized_key=item.normalized_key, source_url=item.source_url,
+                snippet=item.snippet, location=item.location,
+                search_query=item.search_query,
+                qualification_score=item.qualification_score,
+                score_reasons=item.score_reasons or [],
+            ) for item in returned
+        ],
+    )
+
+
+@app.get("/company-prospects", response_model=list[CompanyProspectRead])
+def list_company_prospects(
+    min_score: int = Query(default=0, ge=0, le=100),
+    location: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    statement = select(CompanyProspect).where(CompanyProspect.qualification_score >= min_score)
+    if location:
+        statement = statement.where(CompanyProspect.location.ilike(f"%{location}%"))
+    statement = statement.order_by(
+        CompanyProspect.qualification_score.desc(),
+        CompanyProspect.last_seen_at.desc(),
+    ).limit(limit)
+    return list(db.scalars(statement).all())
+
+
+@app.post("/company-prospects/{prospect_id}/review", response_model=CompanyReviewRead, status_code=201)
+def review_company_prospect(prospect_id: int, db: Session = Depends(get_db)):
+    """Move a discovered company into the existing human-verification queue."""
+    prospect = db.get(CompanyProspect, prospect_id)
+    if prospect is None:
+        raise HTTPException(status_code=404, detail="Company prospect not found")
+    existing = db.scalar(select(CompanyReview).where(
+        CompanyReview.normalized_key == prospect.normalized_key
+    ))
+    if existing:
+        return existing
+    review = CompanyReview(
+        normalized_key=prospect.normalized_key,
+        company_name=prospect.company_name,
+        source_url=prospect.source_url,
+        research_summary=prospect.snippet,
+        verification_status="pending",
+    )
+    db.add(review)
+    try:
+        db.commit()
+        db.refresh(review)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Company review already exists") from exc
+    return review
+
+
+@app.post("/discovery/jobs/search", response_model=DynamicJobSearchResponse)
+def search_jobs(payload: JobSearchRequest, db: Session = Depends(get_db)):
+    """Run a live Google Jobs search and upsert normalized opportunities."""
+    try:
+        jobs = SerpApiAdapter().search_jobs(
+            query=payload.query, location=payload.location,
+            country=payload.country, limit=payload.limit,
+        )
+    except SourceFetchError as exc:
+        status_code = 503 if "SERPAPI_API_KEY is not configured" in str(exc) else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except SourceContractError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    created = updated = unchanged = 0
+    now = datetime.now(timezone.utc)
+    for job in jobs:
+        values = {
+            "company_name": job.company_name, "title": job.title,
+            "location": job.location, "remote": job.remote,
+            "tags": job.tags, "job_types": job.job_types,
+            "description": job.description, "source_url": str(job.source_url),
+            "source_created_at": job.created_at,
+        }
+        existing = db.scalar(select(Opportunity).where(
+            Opportunity.source == job.source,
+            Opportunity.external_id == job.external_id,
+        ))
+        if existing is None:
+            db.add(Opportunity(
+                source=job.source, external_id=job.external_id, **values,
+                first_seen_at=now, last_seen_at=now,
+            ))
+            created += 1
+        else:
+            changed = any(getattr(existing, key) != value for key, value in values.items())
+            existing.last_seen_at = now
+            if changed:
+                for key, value in values.items():
+                    setattr(existing, key, value)
+                updated += 1
+            else:
+                unchanged += 1
+    db.commit()
+    return DynamicJobSearchResponse(
+        query=payload.query, source="serpapi_google_jobs",
+        fetched=len(jobs), created=created, updated=updated, unchanged=unchanged,
+        results=[
+            {
+                "source": job.source, "external_id": job.external_id,
+                "company_name": job.company_name, "title": job.title,
+                "location": job.location, "remote": job.remote,
+                "tags": job.tags, "job_types": job.job_types,
+                "description": job.description, "source_url": str(job.source_url),
+                "created_at": job.created_at,
+            } for job in jobs
+        ],
     )
