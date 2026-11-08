@@ -126,15 +126,12 @@ ClientFinder now has two independent live discovery workflows. The previous Oppo
 
 ### Provider decision
 
-The initial provider is SerpApi:
-- Free tier: 250 successful searches/month and 50 searches/hour.
-- Starter tier: USD 25/month for 1,000 searches/month and 200 searches/hour.
-- One search request is charged as one search regardless of the number of returned records.
-- The same API key supports Google organic search and Google Jobs results.
-- SerpApi's public terms state that search data is retained for 31 days by default; ZeroTrace Mode prevents provider-side retention. Review current terms and eligibility before production use.
-- Provider availability and payment acceptance are account-specific. Do not assume that a plan can be purchased from every jurisdiction.
+Company discovery uses Exa Search API. Results are scored and returned to the dashboard for the current session; they are not persisted in ClientFinder. This keeps Exa output out of the permanent database until storage rights are confirmed.
 
-Pricing and terms can change. Verify the current plan before enabling paid use.
+- Endpoint: `POST https://api.exa.ai/search`
+- Company discovery uses Exa's `company` category, `lite` search type, and highlights.
+- Check current quotas and pricing at https://exa.ai/pricing/
+- Exa company search does not replace a structured jobs feed. Arbeitnow remains available; the legacy SerpApi Google Jobs endpoint remains separate for now.
 
 ### Configure the API key
 
@@ -142,7 +139,7 @@ Set the key in the FastAPI server environment. Do not put it in Streamlit, front
 
 PowerShell:
 ```powershell
-$env:SERPAPI_API_KEY = "your-serpapi-key"
+$env:EXA_API_KEY = "your-serpapi-key"
 uvicorn app.main:app --reload
 ```
 
@@ -162,7 +159,7 @@ Example:
 }
 ```
 
-Results are normalized and upserted into `company_prospects`. Deduplication uses provider + result URL. A deterministic keyword heuristic gives a transparent fit score; it is not an AI judgment or conversion probability.
+Results are returned for the current session and are not persisted. Deduplication uses provider + result URL. A deterministic keyword heuristic gives a transparent fit score; it is not an AI judgment or conversion probability.
 
 - `GET /company-prospects?min_score=25&limit=50`
 - `POST /company-prospects/{prospect_id}/review`
@@ -202,7 +199,7 @@ The Streamlit workspace now includes:
 - Company search results are candidates, not verified businesses. Search result titles may be page titles rather than legal company names.
 - The company fit score is explainable keyword matching and requires human review.
 - Google Jobs coverage, location interpretation, and remote-work labels depend on the source response.
-- Search requests are live only when `SERPAPI_API_KEY` is configured.
+- Search requests are live only when `EXA_API_KEY` is configured.
 - The API still has no authentication. Keep it local/private; do not expose it publicly without authentication, authorization, rate limiting, and deployment hardening.
 - SQLite `create_all` creates the new `company_prospects` table, but it does not migrate arbitrary future schema changes. Use Alembic before production schema evolution.
 
@@ -217,7 +214,7 @@ The initial provider is SerpApi:
 - Free tier: 250 successful searches/month and 50 searches/hour.
 - Starter tier: USD 25/month for 1,000 searches/month and 200 searches/hour.
 - One search request is charged as one search regardless of the number of returned records.
-- The same API key supports Google organic search and Google Jobs results.
+- The Exa key is used for company discovery only.
 - SerpApi's public terms state that search data is retained for 31 days by default; ZeroTrace Mode prevents provider-side retention. Review current terms and eligibility before production use.
 - Provider availability and payment acceptance are account-specific. Do not assume that a plan can be purchased from every jurisdiction.
 
@@ -229,7 +226,7 @@ Set the key in the FastAPI server environment. Do not put it in Streamlit, front
 
 PowerShell:
 ```powershell
-$env:SERPAPI_API_KEY = "your-serpapi-key"
+$env:EXA_API_KEY = "your-serpapi-key"
 uvicorn app.main:app --reload
 ```
 
@@ -249,7 +246,7 @@ Example:
 }
 ```
 
-Results are normalized and upserted into `company_prospects`. Deduplication uses provider + result URL. A deterministic keyword heuristic gives a transparent fit score; it is not an AI judgment or conversion probability.
+Results are returned for the current session and are not persisted. Deduplication uses provider + result URL. A deterministic keyword heuristic gives a transparent fit score; it is not an AI judgment or conversion probability.
 
 - `GET /company-prospects?min_score=25&limit=50`
 - `POST /company-prospects/{prospect_id}/review`
@@ -289,6 +286,6 @@ The Streamlit workspace now includes:
 - Company search results are candidates, not verified businesses. Search result titles may be page titles rather than legal company names.
 - The company fit score is explainable keyword matching and requires human review.
 - Google Jobs coverage, location interpretation, and remote-work labels depend on the source response.
-- Search requests are live only when `SERPAPI_API_KEY` is configured.
+- Search requests are live only when `EXA_API_KEY` is configured.
 - The API still has no authentication. Keep it local/private; do not expose it publicly without authentication, authorization, rate limiting, and deployment hardening.
 - SQLite `create_all` creates the new `company_prospects` table, but it does not migrate arbitrary future schema changes. Use Alembic before production schema evolution.
