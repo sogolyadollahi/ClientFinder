@@ -52,6 +52,8 @@ class CompanyReviewRead(BaseModel):
     official_website: str | None
     verification_status: str
     verification_notes: str
+    source_url: str | None
+    research_summary: str
     lead_id: int | None
     created_at: datetime
     updated_at: datetime
