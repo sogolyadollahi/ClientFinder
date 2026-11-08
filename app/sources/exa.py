@@ -46,6 +46,7 @@ class ExaAdapter:
                 headers={
                     "x-api-key": self.api_key,
                     "Content-Type": "application/json",
+                    "User-Agent": "ClientFinder/1.0 (Exa API integration)",
                 },
                 json=body,
                 timeout=self.timeout,
@@ -60,8 +61,11 @@ class ExaAdapter:
         if response.is_error:
             # Keep the diagnostic useful without exposing request headers or API keys.
             detail = " ".join(response.text.split())[:500]
+            cf_ray = response.headers.get("cf-ray")
+            diagnostic = f" Cloudflare Ray ID: {cf_ray}." if cf_ray else ""
             raise SourceFetchError(
-                f"Exa returned HTTP {response.status_code}: {detail or 'empty response body'}"
+                f"Exa returned HTTP {response.status_code}:{diagnostic} "
+                f"{detail or 'empty response body'}"
             )
 
         try:
