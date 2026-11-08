@@ -1,4 +1,4 @@
-# ClientFinder — Phase 5
+# ClientFinder — Phase 7
 
 A focused lead-discovery and qualification API. It keeps raw job opportunities, computed company candidates, manual company verification, and qualified Leads as separate stages.
 
@@ -118,3 +118,90 @@ Set CLIENTFINDER_API_URL if the API is hosted somewhere other than http://127.0.
 - Arbeitnow opportunity browsing and manual source sync.
 
 The dashboard is intended for trusted local use. The API currently has no authentication; do not expose either service publicly without adding authentication, authorization, and deployment hardening.
+
+
+## Phase 7 — Dynamic discovery (companies + jobs)
+
+ClientFinder now has two independent live discovery workflows. The previous Opportunity feed remains available, but its search box only filters saved records; the new discovery endpoints make external requests.
+
+### Provider decision
+
+The initial provider is SerpApi:
+- Free tier: 250 successful searches/month and 50 searches/hour.
+- Starter tier: USD 25/month for 1,000 searches/month and 200 searches/hour.
+- One search request is charged as one search regardless of the number of returned records.
+- The same API key supports Google organic search and Google Jobs results.
+- SerpApi's public terms state that search data is retained for 31 days by default; ZeroTrace Mode prevents provider-side retention. Review current terms and eligibility before production use.
+- Provider availability and payment acceptance are account-specific. Do not assume that a plan can be purchased from every jurisdiction.
+
+Pricing and terms can change. Verify the current plan before enabling paid use.
+
+### Configure the API key
+
+Set the key in the FastAPI server environment. Do not put it in Streamlit, frontend code, GitHub, or committed configuration files.
+
+PowerShell:
+```powershell
+$env:SERPAPI_API_KEY = "your-serpapi-key"
+uvicorn app.main:app --reload
+```
+
+If the key is absent, the live endpoints return HTTP 503 with a configuration message. The rest of the API and dashboard remain usable.
+
+### Company prospect discovery
+
+`POST /discovery/companies/search`
+
+Example:
+```json
+{
+  "query": "Python automation software agencies",
+  "location": "Berlin, Germany",
+  "country": "DE",
+  "limit": 10
+}
+```
+
+Results are normalized and upserted into `company_prospects`. Deduplication uses provider + result URL. A deterministic keyword heuristic gives a transparent fit score; it is not an AI judgment or conversion probability.
+
+- `GET /company-prospects?min_score=25&limit=50`
+- `POST /company-prospects/{prospect_id}/review`
+
+A prospect enters the existing manual verification queue. Verify the official website yourself before promotion:
+- `GET /companies/reviews?status=pending`
+- `PATCH /companies/reviews/{review_id}`
+- `POST /companies/reviews/{review_id}/promote`
+
+A search-result URL is evidence for review, not proof that it is the company's official website.
+
+### Job and contract discovery
+
+`POST /discovery/jobs/search`
+
+Example:
+```json
+{
+  "query": "Python backend developer OR automation contractor",
+  "location": "Germany",
+  "country": "DE",
+  "limit": 10
+}
+```
+
+The endpoint calls Google Jobs through SerpApi and upserts results into the existing `opportunities` table with source `serpapi_google_jobs`. It is independent of company prospect search. Arbeitnow remains available as a supplementary job-board source.
+
+### Dashboard
+
+The Streamlit workspace now includes:
+- Company discovery: enter a query and target market, run a live search, inspect evidence and queue a prospect for review.
+- Company verification: manually verify a domain and promote a verified company into Leads.
+- Jobs: search live Google Jobs results, sync Arbeitnow, and filter saved listings.
+
+### Data boundaries and limitations
+
+- Company search results are candidates, not verified businesses. Search result titles may be page titles rather than legal company names.
+- The company fit score is explainable keyword matching and requires human review.
+- Google Jobs coverage, location interpretation, and remote-work labels depend on the source response.
+- Search requests are live only when `SERPAPI_API_KEY` is configured.
+- The API still has no authentication. Keep it local/private; do not expose it publicly without authentication, authorization, rate limiting, and deployment hardening.
+- SQLite `create_all` creates the new `company_prospects` table, but it does not migrate arbitrary future schema changes. Use Alembic before production schema evolution.
