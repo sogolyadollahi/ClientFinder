@@ -120,172 +120,49 @@ Set CLIENTFINDER_API_URL if the API is hosted somewhere other than http://127.0.
 The dashboard is intended for trusted local use. The API currently has no authentication; do not expose either service publicly without adding authentication, authorization, and deployment hardening.
 
 
-## Phase 7 — Dynamic discovery (companies + jobs)
+## Phase 7 — Dynamic discovery
 
-ClientFinder now has two independent live discovery workflows. The previous Opportunity feed remains available, but its search box only filters saved records; the new discovery endpoints make external requests.
+### Company discovery — Exa
 
-### Provider decision
+ClientFinder uses Exa Search API for live company discovery.
 
-Company discovery uses Exa Search API. Results are scored and returned to the dashboard for the current session; they are not persisted in ClientFinder. This keeps Exa output out of the permanent database until storage rights are confirmed.
+- Endpoint: `POST /discovery/companies/search`
+- Search type: `lite`
+- Category: `company`
+- Returned fields: result title, URL, highlights, location context, and a deterministic fit score.
+- Exa results are displayed in the dashboard for the current session. They are **not persisted** in the ClientFinder database while the provider's output-storage permission remains unconfirmed.
+- A result title may be a page title rather than the legal company name. Verify the company and official domain independently before creating a Lead.
 
-- Endpoint: `POST https://api.exa.ai/search`
-- Company discovery uses Exa's `company` category, `lite` search type, and highlights.
-- Check current quotas and pricing at https://exa.ai/pricing/
-- Exa company search does not replace a structured jobs feed. Arbeitnow remains available; the legacy SerpApi Google Jobs endpoint remains separate for now.
+Configure the Exa key in the FastAPI server environment only:
 
-### Configure the API key
-
-Set the key in the FastAPI server environment. Do not put it in Streamlit, frontend code, GitHub, or committed configuration files.
-
-PowerShell:
 ```powershell
-$env:EXA_API_KEY = "your-serpapi-key"
+$env:EXA_API_KEY = "your-exa-api-key"
 uvicorn app.main:app --reload
 ```
 
-If the key is absent, the live endpoints return HTTP 503 with a configuration message. The rest of the API and dashboard remain usable.
+Do not put API keys in Streamlit, frontend code, GitHub, or committed configuration files.
 
-### Company prospect discovery
-
-`POST /discovery/companies/search`
-
-Example:
-```json
-{
-  "query": "Python automation software agencies",
-  "location": "Berlin, Germany",
-  "country": "DE",
-  "limit": 10
-}
-```
-
-Results are returned for the current session and are not persisted. Deduplication uses provider + result URL. A deterministic keyword heuristic gives a transparent fit score; it is not an AI judgment or conversion probability.
-
-- `GET /company-prospects?min_score=25&limit=50`
-- `POST /company-prospects/{prospect_id}/review`
-
-A prospect enters the existing manual verification queue. Verify the official website yourself before promotion:
-- `GET /companies/reviews?status=pending`
-- `PATCH /companies/reviews/{review_id}`
-- `POST /companies/reviews/{review_id}/promote`
-
-A search-result URL is evidence for review, not proof that it is the company's official website.
+Check current quotas and pricing at https://exa.ai/pricing/ and the API reference at https://exa.ai/docs/reference/search.
 
 ### Job and contract discovery
 
-`POST /discovery/jobs/search`
+The structured live Google Jobs integration remains on SerpApi and requires a separate `SERPAPI_API_KEY`. Arbeitnow remains available as a supplementary source.
 
-Example:
-```json
-{
-  "query": "Python backend developer OR automation contractor",
-  "location": "Germany",
-  "country": "DE",
-  "limit": 10
-}
-```
-
-The endpoint calls Google Jobs through SerpApi and upserts results into the existing `opportunities` table with source `serpapi_google_jobs`. It is independent of company prospect search. Arbeitnow remains available as a supplementary job-board source.
-
-### Dashboard
-
-The Streamlit workspace now includes:
-- Company discovery: enter a query and target market, run a live search, inspect evidence and queue a prospect for review.
-- Company verification: manually verify a domain and promote a verified company into Leads.
-- Jobs: search live Google Jobs results, sync Arbeitnow, and filter saved listings.
-
-### Data boundaries and limitations
-
-- Company search results are candidates, not verified businesses. Search result titles may be page titles rather than legal company names.
-- The company fit score is explainable keyword matching and requires human review.
-- Google Jobs coverage, location interpretation, and remote-work labels depend on the source response.
-- Search requests are live only when `EXA_API_KEY` is configured.
-- The API still has no authentication. Keep it local/private; do not expose it publicly without authentication, authorization, rate limiting, and deployment hardening.
-- SQLite `create_all` creates the new `company_prospects` table, but it does not migrate arbitrary future schema changes. Use Alembic before production schema evolution.
-
-
-## Phase 7 — Dynamic discovery (companies + jobs)
-
-ClientFinder now has two independent live discovery workflows. The previous Opportunity feed remains available, but its search box only filters saved records; the new discovery endpoints make external requests.
-
-### Provider decision
-
-The initial provider is SerpApi:
-- Free tier: 250 successful searches/month and 50 searches/hour.
-- Starter tier: USD 25/month for 1,000 searches/month and 200 searches/hour.
-- One search request is charged as one search regardless of the number of returned records.
-- The Exa key is used for company discovery only.
-- SerpApi's public terms state that search data is retained for 31 days by default; ZeroTrace Mode prevents provider-side retention. Review current terms and eligibility before production use.
-- Provider availability and payment acceptance are account-specific. Do not assume that a plan can be purchased from every jurisdiction.
-
-Pricing and terms can change. Verify the current plan before enabling paid use.
-
-### Configure the API key
-
-Set the key in the FastAPI server environment. Do not put it in Streamlit, frontend code, GitHub, or committed configuration files.
-
-PowerShell:
 ```powershell
-$env:EXA_API_KEY = "your-serpapi-key"
-uvicorn app.main:app --reload
+$env:SERPAPI_API_KEY = "your-serpapi-key"
 ```
 
-If the key is absent, the live endpoints return HTTP 503 with a configuration message. The rest of the API and dashboard remain usable.
-
-### Company prospect discovery
-
-`POST /discovery/companies/search`
-
-Example:
-```json
-{
-  "query": "Python automation software agencies",
-  "location": "Berlin, Germany",
-  "country": "DE",
-  "limit": 10
-}
-```
-
-Results are returned for the current session and are not persisted. Deduplication uses provider + result URL. A deterministic keyword heuristic gives a transparent fit score; it is not an AI judgment or conversion probability.
-
-- `GET /company-prospects?min_score=25&limit=50`
-- `POST /company-prospects/{prospect_id}/review`
-
-A prospect enters the existing manual verification queue. Verify the official website yourself before promotion:
-- `GET /companies/reviews?status=pending`
-- `PATCH /companies/reviews/{review_id}`
-- `POST /companies/reviews/{review_id}/promote`
-
-A search-result URL is evidence for review, not proof that it is the company's official website.
-
-### Job and contract discovery
-
-`POST /discovery/jobs/search`
-
-Example:
-```json
-{
-  "query": "Python backend developer OR automation contractor",
-  "location": "Germany",
-  "country": "DE",
-  "limit": 10
-}
-```
-
-The endpoint calls Google Jobs through SerpApi and upserts results into the existing `opportunities` table with source `serpapi_google_jobs`. It is independent of company prospect search. Arbeitnow remains available as a supplementary job-board source.
+Do not assume Exa's company search endpoint is a structured replacement for Google Jobs. The Exa integration currently covers company discovery only.
 
 ### Dashboard
 
-The Streamlit workspace now includes:
-- Company discovery: enter a query and target market, run a live search, inspect evidence and queue a prospect for review.
-- Company verification: manually verify a domain and promote a verified company into Leads.
-- Jobs: search live Google Jobs results, sync Arbeitnow, and filter saved listings.
+- Company discovery: live Exa search with session-only results.
+- Company verification: existing manual verification workflow for records already in the review queue.
+- Jobs: live SerpApi job search plus Arbeitnow sync.
 
-### Data boundaries and limitations
+### Data boundaries
 
-- Company search results are candidates, not verified businesses. Search result titles may be page titles rather than legal company names.
-- The company fit score is explainable keyword matching and requires human review.
-- Google Jobs coverage, location interpretation, and remote-work labels depend on the source response.
-- Search requests are live only when `EXA_API_KEY` is configured.
-- The API still has no authentication. Keep it local/private; do not expose it publicly without authentication, authorization, rate limiting, and deployment hardening.
-- SQLite `create_all` creates the new `company_prospects` table, but it does not migrate arbitrary future schema changes. Use Alembic before production schema evolution.
+- Exa search results are not persisted.
+- Company titles and highlights are research signals, not proof of company identity, official-domain ownership, or purchase intent.
+- The fit score is keyword-based prioritization, not a probability.
+- Keep the API local/private; the API has no authentication.
